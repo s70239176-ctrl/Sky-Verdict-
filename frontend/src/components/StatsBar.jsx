@@ -13,7 +13,7 @@ function Stat({ label, value, accent = "text-ink-primary" }) {
 export default function StatsBar() {
   const [pool, setPool] = useState(null);
   const [total, setTotal] = useState(null);
-  const [failed, setFailed] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!contractConfigured()) return;
@@ -22,8 +22,8 @@ export default function StatsBar() {
       try {
         const p = await getPool();
         if (!cancelled) setPool(p);
-      } catch {
-        if (!cancelled) setFailed(true);
+      } catch (e) {
+        if (!cancelled) setError(e?.message || String(e));
       }
       try {
         const t = await getTotalPolicies();
@@ -45,10 +45,11 @@ export default function StatsBar() {
     );
   }
 
-  if (failed) {
+  if (error) {
     return (
       <div className="rounded-lg border border-signal-red/30 bg-signal-red/5 px-4 py-3 text-sm text-signal-red">
-        Couldn't reach the contract. Check the RPC/network settings in <code className="font-mono">.env.local</code>.
+        <p className="font-medium">Couldn't load contract data.</p>
+        <p className="mt-1 font-mono text-xs opacity-80 break-words">{error}</p>
       </div>
     );
   }
