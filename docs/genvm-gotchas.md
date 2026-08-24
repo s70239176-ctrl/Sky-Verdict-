@@ -92,6 +92,24 @@ JSON-RPC POST server-side — server-to-server requests aren't subject to
 CORS at all — and point the frontend at it via
 `VITE_GENLAYER_RPC_URL=same-origin` (see `.env.example`).
 
+## 8. Even read-only `gen_call` requests need a `from` address
+**Symptom:** `viem` wraps it as a generic `An unknown RPC error occurred.
+Details: 'from'` — easy to misread as some obscure viem/transport problem.
+The `'from'` in quotes with nothing else around it is actually the string
+form of a raw Python `KeyError: 'from'` leaking through from the RPC
+backend, which strongly suggests server-side code doing an unguarded
+`params['from']` lookup.
+**Fix:** unlike a typical Ethereum `eth_call`, which is happy to run
+anonymously with no `from`, this GenLayer RPC backend appears to require
+one on every request — including pure view-method reads. A
+`createClient({ chain })` with no `account` at all (e.g. for reads before
+a user has connected any wallet) omits `from` entirely and trips this.
+Give even the anonymous read path a throwaway `createAccount()` so every
+request always has *some* address to send as `from` — see
+`getReadOnlyAccount()` in `frontend/src/lib/genlayerClient.js`. It never
+signs anything and is unrelated to (and never shown as) a connected
+wallet.
+
 ## General lesson
 The two failure modes look identical from Studio's toast notification
 ("Could not load contract schema" / generic `invalid_contract`) but come
