@@ -77,7 +77,7 @@ supplied to `deploy/deploy.py` / the CLI directly, never committed.
 ## Deployment targets
 1. **GenLayer Studio** (hosted, `studio.genlayer.com`) — used for initial
    build/debug; current deployed instance:
-   `0xd17E7E87bD7191F556EA3A404269dDe2207d393b` (see README for network
+   `0xDa95D4851E848C7fE030FC848596625Edb2d905c` (see README for network
    details — confirm exact RPC/chain ID from the Studio UI, since hosted
    Studio's backing network can be updated by GenLayer independent of this
    repo).

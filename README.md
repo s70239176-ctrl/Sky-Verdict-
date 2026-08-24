@@ -18,9 +18,10 @@ on-chain, in the same transaction.
 
 | | |
 |---|---|
-| Address | `0xd17E7E87bD7191F556EA3A404269dDe2207d393b` |
+| Address | `0xDa95D4851E848C7fE030FC848596625Edb2d905c` |
 | Network | GenLayer Studio (hosted) — confirm current RPC/chain ID in the Studio UI before pointing a frontend or client at it; hosted Studio's backing network is operated by GenLayer Labs and can change independently of this repo |
 | Explorer | not yet linked — add once available for this network |
+| Live frontend | deployed on Vercel — **add the URL here** once confirmed stable (see `docs/SDLC.md` Phase 4) |
 
 This is a Studio-stage deployment for active testing (see
 [`docs/SDLC.md`](docs/SDLC.md) for current phase status), not a
@@ -32,7 +33,7 @@ Testnet Bradbury or mainnet deployment.
 contracts/SkyVerdict.py     # the only on-chain contract
 tests/direct/                # fast, offline, mocked unit tests (no Studio needed)
 tests/integration/           # gltest-based tests against GenLayer Studio
-frontend/                    # React (Vite) UI skeleton: buy / status / trigger
+frontend/                    # Vite + React + Tailwind app — see frontend/README.md
 deploy/deploy.py             # scripted deployment entrypoint
 gltest.config.yaml           # network + test config for the GenLayer CLI
 ```
@@ -96,10 +97,17 @@ genlayer deploy --contract contracts/SkyVerdict.py --args 0xYourCreatorAddress -
 ```bash
 cd frontend
 npm install
-echo "VITE_SKYVERDICT_ADDRESS=0xYourDeployedAddress" > .env.local
-echo "VITE_GENLAYER_RPC_URL=http://localhost:4000/api" >> .env.local
+cp .env.example .env.local   # then edit VITE_SKYVERDICT_ADDRESS if needed
 npm run dev
 ```
+
+Full-featured Vite + React + Tailwind app — landing page, a Buy Coverage
+wizard, a client-tracked "My Policies" dashboard, a policy detail view
+with live Evaluate/Appeal/Refund actions and an animated consensus
+visualization, and a public Transparency feed. Connect a real browser
+wallet or use the built-in one-click Demo Mode (a throwaway
+`genlayer-js` session key) to try every write path with no setup. See
+`frontend/README.md` for the full feature tour.
 
 ## Example transaction flow
 
@@ -206,8 +214,12 @@ Stated plainly, per the project's own submission checklist:
 - **No off-chain keeper bot yet** — `evaluate_claim` must currently be
   triggered manually (by the holder or anyone) after the settlement
   buffer elapses; nothing calls it automatically today.
-- **Frontend is an unstyled skeleton**, not deployed anywhere yet (Phase 2
-  in `docs/SDLC.md`).
+- **Frontend hasn't been through a full `npm install` + build cycle in
+  this environment** (sandboxed, no network access) — every file was
+  written carefully and syntax-checked with the TypeScript compiler in
+  JSX mode, but a real `npm install && npm run dev` is still the first
+  thing to run before treating it as verified. See `frontend/README.md`
+  for the full feature tour.
 - **This is a Studio-stage deployment**, not Testnet Bradbury or mainnet.
 
 ## Next steps to mainnet / real clients

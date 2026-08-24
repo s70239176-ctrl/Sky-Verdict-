@@ -57,6 +57,41 @@ declared type parameters (`TreeMap[K, V]`) that the storage descriptor
 checks against. Just mutate the field in place
 (`self.some_treemap_field[key] = value`) if you need to seed it with data.
 
+## 6. `genlayer-js/chains` named imports can crash the whole frontend on load
+**Symptom:** blank dark page in the browser, no error in the Vite terminal
+(compile succeeds), only visible in the browser console:
+`Uncaught SyntaxError: The requested module '.../genlayer-js_chains.js'
+does not provide an export named 'studionet'`.
+**Fix:** the docs describe `studionet`/`testnetAsimov`/`localnet` as named
+exports of `genlayer-js/chains`, but whichever version actually gets
+resolved by `npm install` may not have all of them yet. A static
+`import { studionet } from "genlayer-js/chains"` throws a hard
+`SyntaxError` at module-load time if that name doesn't exist — and
+because this file sits at the root of the frontend's import graph, it
+takes the entire React app down before anything renders, with no build
+error to point at it. Use a namespace import instead
+(`import * as glChains from "genlayer-js/chains"`) and check
+`glChains.studionet` at runtime with a graceful fallback + console
+warning — see `frontend/src/lib/genlayerClient.js`. Same underlying
+lesson as #1/#2 above, just on the JS SDK side instead of the Python one.
+
+## 7. Hosted Studio's RPC blocks direct browser calls from other origins (CORS)
+**Symptom:** everything works when talking to the contract from inside
+Studio itself, but a separately-deployed frontend (e.g. on Vercel) gets a
+generic `TypeError: Failed to fetch` on every `gen_call`/read, with no
+CORS-specific wording visible in some browsers' console output — easy to
+mistake for a wrong network/chain/address when it's neither. Confirmed by
+fetching the RPC URL directly outside a browser (`curl`/server-side
+`fetch`) and getting a normal response (a 405 on a bare GET, since it's a
+POST-only JSON-RPC endpoint) — proving the endpoint is alive and the
+problem is browser-enforced, not the network being unreachable.
+**Fix:** browsers enforce CORS; there is no client-side workaround for a
+server that doesn't send `Access-Control-Allow-Origin`. Add a same-origin
+serverless proxy (`frontend/api/rpc.js` on Vercel) that forwards the
+JSON-RPC POST server-side — server-to-server requests aren't subject to
+CORS at all — and point the frontend at it via
+`VITE_GENLAYER_RPC_URL=same-origin` (see `.env.example`).
+
 ## General lesson
 The two failure modes look identical from Studio's toast notification
 ("Could not load contract schema" / generic `invalid_contract`) but come

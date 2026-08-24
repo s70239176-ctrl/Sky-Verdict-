@@ -644,3 +644,10 @@ fences, no commentary:
     @gl.public.view
     def is_domain_allowed(self, domain: str) -> bool:
         return bool(self.allowlisted_domains.get(domain, False))
+
+    @gl.public.view
+    def get_total_policies(self) -> int:
+        # next_policy_id starts at 1 and increments after every create_policy,
+        # so (next_policy_id - 1) is the count of policies ever created —
+        # lets a frontend enumerate 1..N without a trusted indexer.
+        return int(self.next_policy_id) - 1

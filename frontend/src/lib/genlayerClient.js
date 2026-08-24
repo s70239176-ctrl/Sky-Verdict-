@@ -19,7 +19,19 @@ import * as glChains from "genlayer-js/chains";
 
 const CONTRACT_ADDRESS = import.meta.env.VITE_SKYVERDICT_ADDRESS || "";
 const CHAIN_NAME = import.meta.env.VITE_GENLAYER_CHAIN || "studionet";
-const RPC_URL = import.meta.env.VITE_GENLAYER_RPC_URL || undefined;
+
+// "same-origin" is a special sentinel: resolves at runtime to this deployed
+// site's own /api/rpc proxy (see api/rpc.js) instead of calling the GenLayer
+// RPC directly from the browser, which fails with a CORS-driven
+// `TypeError: Failed to fetch` on hosted Studio (see docs/genvm-gotchas.md #7).
+// Any other value is used as a literal RPC URL, unchanged.
+const RPC_URL_RAW = import.meta.env.VITE_GENLAYER_RPC_URL || undefined;
+const RPC_URL =
+  RPC_URL_RAW === "same-origin"
+    ? typeof window !== "undefined"
+      ? `${window.location.origin}/api/rpc`
+      : undefined
+    : RPC_URL_RAW;
 
 // Namespace import on purpose: genlayer-js's exported chain set has moved
 // under us before (see docs/genvm-gotchas.md for the pattern on the Python
