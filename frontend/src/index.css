@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-image:
+    linear-gradient(rgba(22, 35, 58, 0.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 35, 58, 0.5) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: center top;
+}
+
+::selection {
+  background: rgba(45, 212, 207, 0.3);
+  color: #e8eef6;
+}
+
+/* Visible keyboard focus everywhere — no focus-visible suppression */
+:focus-visible {
+  outline: 2px solid #2dd4cf;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.split-flap {
+  display: inline-block;
+  perspective: 200px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.radar-grid-line {
+  stroke: #16233a;
+  stroke-width: 1;
+  fill: none;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #16233a;
+  border-radius: 999px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
