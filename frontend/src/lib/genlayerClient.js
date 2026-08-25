@@ -73,26 +73,22 @@ export function contractAddress() {
 let client = null;
 let currentAccount = null; // { type: 'wallet' | 'demo', address }
 
-// Every GenLayer RPC call — even a read-only `gen_call` — appears to
-// require a `from` address; the backend threw a bare Python `KeyError:
-// 'from'` when the client had no account attached at all (see
-// docs/genvm-gotchas.md #8). This throwaway account exists purely so
-// anonymous reads (nobody's connected a wallet yet) always have *some*
-// address to send as `from`. It never signs anything meaningful and is
-// never shown as "connected" in the UI.
-let readOnlyAccount = null;
-function getReadOnlyAccount() {
-  if (!readOnlyAccount) readOnlyAccount = createAccount();
-  return readOnlyAccount;
-}
-
 function buildClient(account) {
   if (!chain) {
     throw new Error(
       "No usable genlayer-js chain export was found. Check the console warning above and your installed genlayer-js version."
     );
   }
-  const opts = { chain, account: account || getReadOnlyAccount() };
+  // Deliberately omit `account` entirely when nobody's connected — matching
+  // GenLayer's own reference app (genlayer-project-boilerplate), which never
+  // manufactures a throwaway account for anonymous reads. An earlier version
+  // of this file did fabricate one via createAccount() to work around a
+  // `KeyError: 'from'` we hit — that turned out to be a symptom of an
+  // unrelated wrong-chain bug (see docs/genvm-gotchas.md #8), and the
+  // fabricated account was itself causing a *different* execution-time
+  // failure server-side. Removed; do not reintroduce without solid evidence.
+  const opts = { chain };
+  if (account) opts.account = account;
   if (RPC_URL) opts.endpoint = RPC_URL;
   return createClient(opts);
 }

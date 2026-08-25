@@ -38,7 +38,12 @@ export default async function handler(req, res) {
       try {
         const parsed = JSON.parse(text);
         if (parsed?.error) {
-          console.error("[rpc proxy] upstream returned a JSON-RPC error:", parsed.error);
+          console.error(
+            "[rpc proxy] upstream returned a JSON-RPC error for request:",
+            JSON.stringify(req.body)?.slice(0, 800),
+            "\n->",
+            parsed.error
+          );
         }
       } catch {
         // non-JSON body — nothing more to log
