@@ -92,23 +92,49 @@ JSON-RPC POST server-side — server-to-server requests aren't subject to
 CORS at all — and point the frontend at it via
 `VITE_GENLAYER_RPC_URL=same-origin` (see `.env.example`).
 
-## 8. Even read-only `gen_call` requests need a `from` address
-**Symptom:** `viem` wraps it as a generic `An unknown RPC error occurred.
-Details: 'from'` — easy to misread as some obscure viem/transport problem.
-The `'from'` in quotes with nothing else around it is actually the string
-form of a raw Python `KeyError: 'from'` leaking through from the RPC
-backend, which strongly suggests server-side code doing an unguarded
-`params['from']` lookup.
-**Fix:** unlike a typical Ethereum `eth_call`, which is happy to run
-anonymously with no `from`, this GenLayer RPC backend appears to require
-one on every request — including pure view-method reads. A
-`createClient({ chain })` with no `account` at all (e.g. for reads before
-a user has connected any wallet) omits `from` entirely and trips this.
-Give even the anonymous read path a throwaway `createAccount()` so every
-request always has *some* address to send as `from` — see
-`getReadOnlyAccount()` in `frontend/src/lib/genlayerClient.js`. It never
-signs anything and is unrelated to (and never shown as) a connected
-wallet.
+## 8. [RETRACTED] "Even read-only `gen_call` requests need a `from` address"
+**Original claim:** a `KeyError: 'from'` meant every request, even reads,
+needed an account attached, so we fabricated a throwaway `createAccount()`
+for anonymous reads.
+**Why it was wrong:** that KeyError happened while the client was
+misconfigured onto the wrong chain (a leftover `testnetAsimov` fallback
+from `studionet` not existing in `genlayer-js@0.9.5` at the time). Once
+the app was correctly upgraded to `genlayer-js@1.1.8` (where `studionet`
+genuinely is exported — confirmed against GenLayer's own
+`genlayer-project-boilerplate` reference app) and `VITE_GENLAYER_CHAIN`
+was pointed at `studionet` again, the fabricated read-only account itself
+became the problem: it caused a *different*, execution-time backend
+failure (`exit_code 1`) that Studio's own UI and the boilerplate's own
+reference code — neither of which manufacture an account for anonymous
+reads — never hit. Removed entirely; `buildClient()` now omits `account`
+whenever nobody's connected, matching the reference app exactly.
+**Lesson:** a workaround that makes one symptom go away isn't proof the
+underlying diagnosis was correct — especially when the workaround itself
+introduces a plausible new failure mode. Worth re-testing old workarounds
+after fixing an unrelated root cause nearby, rather than assuming they're
+still both necessary and harmless.
+
+## 9. `readContract`/`writeContract` use `functionName`, not `method`
+**Symptom:** every read and write failed with a generic `execution
+failed` / decoded `exit_code 1` from the contract runtime — persisted
+across chain changes, account changes, and even a major `genlayer-js`
+version bump, because none of those were the actual problem.
+**Root cause:** every call in this file was written with
+`method: "get_pool"` (etc.) instead of `functionName: "get_pool"`.
+`genlayer-js`'s actual option key is `functionName` — confirmed against
+GenLayer's own working `genlayer-project-boilerplate` reference app,
+which uses `functionName` throughout. Passing `method` instead means the
+SDK builds a call with no function name at all, which the contract's
+runtime can't resolve — an unhandled exception server-side, surfacing as
+the same generic `execution failed` we spent this entire session chasing
+through chain presets, CORS, and account handling.
+**Lesson:** when every configuration variable gets fixed one at a time
+and the exact same generic error persists throughout, the bug is
+probably not in any of the things being varied — worth stepping back to
+diff the actual request-building code itself against a known-working
+reference, rather than continuing to vary configuration. This is the
+single highest-leverage fix of the whole debugging arc; everything else
+in gotchas #6–8 was real, but none of it was the main blocker.
 
 ## General lesson
 The two failure modes look identical from Studio's toast notification

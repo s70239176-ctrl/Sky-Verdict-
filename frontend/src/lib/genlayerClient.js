@@ -158,7 +158,7 @@ export async function createPolicy({
   const c = requireClient();
   return c.writeContract({
     address: CONTRACT_ADDRESS,
-    method: "create_policy",
+    functionName: "create_policy",
     args: [
       airlineCode, flightNumber, departureAirport,
       scheduledDepartureUtc, scheduledArrivalUtc,
@@ -173,7 +173,7 @@ export async function evaluateClaim(policyId, sourceUrls) {
   const c = requireClient();
   return c.writeContract({
     address: CONTRACT_ADDRESS,
-    method: "evaluate_claim",
+    functionName: "evaluate_claim",
     args: [Number(policyId), sourceUrls],
   });
 }
@@ -183,7 +183,7 @@ export async function appeal(policyId, extraSourceUrls) {
   const c = requireClient();
   return c.writeContract({
     address: CONTRACT_ADDRESS,
-    method: "appeal",
+    functionName: "appeal",
     args: [Number(policyId), extraSourceUrls],
   });
 }
@@ -193,7 +193,7 @@ export async function claimRefund(policyId) {
   const c = requireClient();
   return c.writeContract({
     address: CONTRACT_ADDRESS,
-    method: "claim_refund",
+    functionName: "claim_refund",
     args: [Number(policyId)],
   });
 }
@@ -207,7 +207,7 @@ export async function getPolicy(policyId) {
   const c = getReadClient();
   return c.readContract({
     address: CONTRACT_ADDRESS,
-    method: "get_policy",
+    functionName: "get_policy",
     args: [Number(policyId)],
   });
 }
@@ -217,7 +217,7 @@ export async function getClaimStatus(policyId) {
   const c = getReadClient();
   return c.readContract({
     address: CONTRACT_ADDRESS,
-    method: "get_claim_status",
+    functionName: "get_claim_status",
     args: [Number(policyId)],
   });
 }
@@ -225,7 +225,7 @@ export async function getClaimStatus(policyId) {
 export async function getPool() {
   requireAddress();
   const c = getReadClient();
-  return c.readContract({ address: CONTRACT_ADDRESS, method: "get_pool", args: [] });
+  return c.readContract({ address: CONTRACT_ADDRESS, functionName: "get_pool", args: [] });
 }
 
 export async function isDomainAllowed(domain) {
@@ -233,7 +233,7 @@ export async function isDomainAllowed(domain) {
   const c = getReadClient();
   return c.readContract({
     address: CONTRACT_ADDRESS,
-    method: "is_domain_allowed",
+    functionName: "is_domain_allowed",
     args: [domain],
   });
 }
@@ -250,7 +250,7 @@ export async function getTotalPolicies() {
   const c = getReadClient();
   return c.readContract({
     address: CONTRACT_ADDRESS,
-    method: "get_total_policies",
+    functionName: "get_total_policies",
     args: [],
   });
 }
