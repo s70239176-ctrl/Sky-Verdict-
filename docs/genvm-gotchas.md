@@ -136,6 +136,29 @@ reference, rather than continuing to vary configuration. This is the
 single highest-leverage fix of the whole debugging arc; everything else
 in gotchas #6–8 was real, but none of it was the main blocker.
 
+## 10. Connected MetaMask stays on whatever network it was already on
+**Symptom:** writes worked fine through Demo Mode (a `createAccount()`
+session key) but failed with a viem "invalid parameters" rejection the
+moment a real MetaMask wallet was connected instead — the one write path
+never actually tested until a real user tried it with a real wallet.
+**Root cause:** `eth_requestAccounts` only asks for permission to see an
+address; it does nothing to switch MetaMask onto GenLayer's network.
+MetaMask stays on whatever chain it already had selected (often Ethereum
+mainnet by default), and a transaction signed while the wallet believes
+it's on the wrong chain doesn't match what the actual GenLayer RPC
+expects.
+**Fix:** explicitly check `eth_chainId` after connecting, and if it
+doesn't match GenLayer's chain ID (Studionet = `61999`, Testnet Bradbury
+= `4221`), request `wallet_switchEthereumChain` — falling back to
+`wallet_addEthereumChain` first if the wallet doesn't have that network
+configured at all (error code `4902`). Matches the exact pattern
+GenLayer's own `genlayer-project-boilerplate` reference app uses — see
+`ensureWalletOnGenLayerNetwork()` in `frontend/src/lib/genlayerClient.js`.
+**Lesson:** Demo Mode successfully passing doesn't prove a real wallet
+will — they exercise genuinely different code paths (a local signing key
+vs. delegating to an external, independently-stateful browser extension).
+Both need testing separately before either is considered proven.
+
 ## General lesson
 The two failure modes look identical from Studio's toast notification
 ("Could not load contract schema" / generic `invalid_contract`) but come

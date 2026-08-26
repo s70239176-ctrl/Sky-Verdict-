@@ -66,6 +66,50 @@ export function contractConfigured() {
   return Boolean(CONTRACT_ADDRESS);
 }
 
+// MetaMask (or any injected wallet) doesn't automatically know about or
+// switch to GenLayer's network just because we called eth_requestAccounts —
+// it stays on whatever chain it was already connected to (often Ethereum
+// mainnet by default). Signing a GenLayer transaction while the wallet
+// thinks it's on a different chain produced an "invalid parameters"
+// rejection — matching how GenLayer's own reference app
+// (genlayer-project-boilerplate) explicitly checks and switches network
+// before allowing a wallet-signed transaction. Chain ID per GenLayer's
+// network docs: Studionet = 61999, Testnet Bradbury = 4221.
+const GENLAYER_CHAIN_IDS = { studionet: 61999, testnetAsimov: 4221, localnet: 61999 };
+const GENLAYER_CHAIN_ID = GENLAYER_CHAIN_IDS[CHAIN_NAME] || 61999;
+const GENLAYER_CHAIN_ID_HEX = `0x${GENLAYER_CHAIN_ID.toString(16)}`;
+const GENLAYER_NETWORK_PARAMS = {
+  chainId: GENLAYER_CHAIN_ID_HEX,
+  chainName: "GenLayer Studio",
+  nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
+  rpcUrls: [RPC_URL || "https://studio.genlayer.com/api"],
+  blockExplorerUrls: [],
+};
+
+async function ensureWalletOnGenLayerNetwork() {
+  const currentHex = await window.ethereum.request({ method: "eth_chainId" });
+  if (parseInt(currentHex, 16) === GENLAYER_CHAIN_ID) return;
+
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: GENLAYER_CHAIN_ID_HEX }],
+    });
+  } catch (err) {
+    // 4902 = the wallet doesn't have this network yet — add it, then switch
+    if (err && err.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [GENLAYER_NETWORK_PARAMS],
+      });
+    } else if (err && err.code === 4001) {
+      throw new Error("You'll need to approve switching to the GenLayer network to continue.");
+    } else {
+      throw err;
+    }
+  }
+}
+
 export function contractAddress() {
   return CONTRACT_ADDRESS;
 }
@@ -108,6 +152,7 @@ export async function connectWallet() {
   }
   const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
   const address = accounts[0];
+  await ensureWalletOnGenLayerNetwork();
   client = buildClient(address);
   currentAccount = { type: "wallet", address };
   return currentAccount;
