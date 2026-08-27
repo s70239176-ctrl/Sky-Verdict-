@@ -227,3 +227,28 @@ confirm no leftover references to the old navy/cyan palette. Budget time
 for `cd frontend && npm install && npm run dev` as the first real step
 before treating this as demo-ready, the same caveat as every prior
 frontend build in this project.
+
+## 11. "My Flights" wasn't actually wallet-personalized
+`MyPolicies.jsx` originally derived its list purely from `localStorage` —
+whatever policy IDs happened to be tracked in that specific browser, with
+no relationship to which wallet was connected. Two different people (or
+the same person on two devices) would see completely different, or
+overlapping, lists with no connection to actual ownership.
+
+Fix: the contract already returns a real `holder` field (the buyer's
+address) on every `get_policy` call — nothing needed to change on the
+contract side. "My Flights" now scans recent policy IDs (via
+`get_total_policies`, capped at the last `SCAN_LIMIT` for performance) and
+filters to `policy.holder === connectedAddress`, so the list is now
+genuinely derived from on-chain truth and follows the connected wallet
+across browsers/devices. Manually-tracked IDs are kept as a separate,
+clearly-labeled section ("not necessarily held by your wallet") rather
+than folded into "yours."
+
+Explicitly NOT fixed, because it isn't a bug: policy data itself is
+public on-chain, readable by anyone with the ID (or via the Verdict
+History page), regardless of which wallet is asking. The UI now says
+this plainly rather than implying a privacy guarantee the architecture
+doesn't have. A real "my policies" index (rather than a linear scan) is
+worth building before this holds meaningful volume — noted as a known
+limitation.
