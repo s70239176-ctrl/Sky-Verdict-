@@ -159,6 +159,30 @@ will — they exercise genuinely different code paths (a local signing key
 vs. delegating to an external, independently-stateful browser extension).
 Both need testing separately before either is considered proven.
 
+## 11. Write-call promises can hang even after the transaction actually finishes
+**Symptom:** clicking "Evaluate claim" sometimes left the button stuck on
+"Awaiting consensus…" indefinitely, with no error and no result — only a
+manual page refresh (which re-fetches state fresh) revealed the verdict
+had actually already landed on-chain minutes earlier.
+**Root cause:** `genlayer-js`'s write-call promise (and whatever internal
+transaction-status polling it does while waiting for confirmation) isn't
+fully reliable — we'd already found real backend crashes in the adjacent
+`gen_getTransactionStatus` RPC method earlier in this project's history.
+A frontend that only does `await fn(); load();` has no way to recover if
+that `await` simply never resolves.
+**Fix:** run an independent polling loop (`frontend/src/pages/
+PolicyDetail.jsx`) that re-fetches the real policy state every few
+seconds regardless of whether the write-call promise itself has settled,
+finishes the pending UI state on whichever happens first (the promise
+resolving, or the poll detecting a real status/verdict change), and gives
+up cleanly after a fixed timeout with a clear "still working in the
+background, check again" message instead of blocking forever.
+**Lesson:** for any write path built on an SDK whose completion signal
+has already proven unreliable once, don't trust that signal as the *only*
+way to know an action finished — cross-check against the actual resource
+state directly, and always give the UI a way out of "stuck" rather than
+assuming the happy path.
+
 ## General lesson
 The two failure modes look identical from Studio's toast notification
 ("Could not load contract schema" / generic `invalid_contract`) but come
@@ -169,3 +193,37 @@ about zero-initialization). The `stdout`/`stderr`/traceback fields in the
 full error detail (not just the toast) are what actually distinguish
 them — always get the expanded error, not just the banner text, before
 guessing at a fix.
+
+## 10. Frontend redesign pass (2026 design brief) — no backend/data changes
+A full visual redesign was applied against `SkyVerdict — 2026 Frontend
+Redesign Master Prompt` (aviation-control/editorial direction, no purple,
+orange/green/blue/amber signal palette, Inter + IBM Plex Mono). This
+touched **only** presentation: `tailwind.config.js`, `index.css`,
+`index.html` fonts, and every component/page in `frontend/src/`.
+`genlayerClient.js`, `localPolicies.js`, `WalletContext.jsx`, and the
+polling/timeout reliability logic in `PolicyDetail.jsx` (see gotcha #9)
+were left untouched — the redesign consumes the same real reads/writes,
+just renders them differently.
+
+Two places where the brief's own "never fabricate data" rule was taken
+literally rather than illustratively:
+- The contract stores no destination airport (`departure_airport` only —
+  see `docs/TRD.md`). The two-airport route visual is used only for the
+  clearly-labeled illustrative hero example; real policies get a
+  single-origin "monitoring" treatment instead of an invented arrival
+  airport.
+- The contract never exposes a validator count. The consensus visual
+  (`ValidatorConsensus.jsx`) shows only real data: the live GenLayer
+  stage name during a pending write, and the contract's own
+  `sources_used`/`sources_total` once a verdict resolves — never a
+  fabricated "8/8 validators agreed" figure.
+
+**Not yet verified:** this sandbox has no network access, so
+`npm install && npm run build` could not be run here (confirmed via a
+403 from the npm registry). Everything was checked statically instead —
+`tsc --noEmit` in JSX mode across every file (clean), every relative
+import manually confirmed to resolve to a real file, and a grep pass to
+confirm no leftover references to the old navy/cyan palette. Budget time
+for `cd frontend && npm install && npm run dev` as the first real step
+before treating this as demo-ready, the same caveat as every prior
+frontend build in this project.

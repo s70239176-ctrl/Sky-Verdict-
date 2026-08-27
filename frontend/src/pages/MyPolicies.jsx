@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { getPolicy } from "../lib/genlayerClient";
 import { getTrackedPolicyIds, trackPolicyId } from "../lib/localPolicies";
-import PolicyCard from "../components/PolicyCard";
+import FlightCard from "../components/FlightCard";
 import EmptyState from "../components/EmptyState";
 import { useWallet } from "../context/WalletContext";
 
@@ -52,11 +52,12 @@ export default function MyPolicies({ openPolicy, setView }) {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-14">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="mx-auto max-w-5xl px-6 py-14 md:py-20">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b rule pb-6">
         <div>
-          <h1 className="text-2xl font-bold text-ink-primary">My policies</h1>
-          <p className="mt-1 text-sm text-ink-dim">
+          <span className="eyebrow text-ivory-soft/40">My flights</span>
+          <h1 className="mt-2 text-display-3 font-extrabold text-ivory">MY FLIGHTS</h1>
+          <p className="mt-2 text-sm text-ivory-soft/50">
             Tracked in this browser only — every status shown is read fresh from the contract.
           </p>
         </div>
@@ -65,42 +66,42 @@ export default function MyPolicies({ openPolicy, setView }) {
             value={addId}
             onChange={(e) => setAddId(e.target.value)}
             placeholder="Policy ID"
-            className="w-28 rounded-md border border-grid bg-panel px-3 py-2 font-mono text-sm text-ink-primary outline-none focus:border-cyan/60"
+            className="w-28 border rule bg-near-black px-3 py-2.5 font-mono text-sm text-ivory outline-none focus:border-orange/60"
           />
           <button
             type="submit"
-            className="rounded-md border border-grid px-3 py-2 text-sm text-ink-primary hover:border-cyan/50"
+            className="border rule px-3 py-2.5 font-mono text-xs uppercase tracking-[0.06em] text-ivory hover:border-orange/50"
           >
             Track
           </button>
         </form>
       </div>
-      {addError && <p className="mt-2 text-sm text-signal-red">{addError}</p>}
+      {addError && <p className="mt-2 text-sm text-amber">{addError}</p>}
 
-      <div className="mt-8">
+      <div className="mt-10">
         {loading ? (
-          <p className="font-mono text-sm text-ink-dim">Loading your policies…</p>
+          <p className="font-mono text-sm text-ivory-soft/50">Loading your flights…</p>
         ) : policies.length === 0 ? (
           <EmptyState
-            title="No policies tracked yet"
+            title="No flights tracked yet"
             body={
               account
-                ? "Buy your first policy, or track an existing one by ID above."
-                : "Connect a wallet, then buy your first policy — or track an existing one by ID above."
+                ? "Protect your first flight, or track an existing one by ID above."
+                : "Connect a wallet, then protect your first flight — or track an existing one by ID above."
             }
             action={
               <button
                 onClick={() => setView("buy")}
-                className="rounded-md bg-cyan px-4 py-2 text-sm font-semibold text-void hover:bg-cyan/90"
+                className="bg-orange px-4 py-2.5 font-mono text-xs uppercase tracking-[0.06em] font-semibold text-ink hover:bg-orange/90"
               >
-                Buy coverage
+                Protect a flight
               </button>
             }
           />
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {policies.map((p) => (
-              <PolicyCard key={p.policy_id} policy={p} onOpen={() => openPolicy(p.policy_id)} />
+              <FlightCard key={p.policy_id} policy={p} onOpen={() => openPolicy(p.policy_id)} />
             ))}
           </div>
         )}

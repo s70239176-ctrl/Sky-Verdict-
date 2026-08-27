@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { WalletProvider } from "./context/WalletContext";
 import { ToastProvider } from "./context/ToastContext";
 import Navbar from "./components/Navbar";
+import MobileBottomNav from "./components/MobileBottomNav";
 import Home from "./pages/Home";
 import BuyCoverage from "./pages/BuyCoverage";
 import MyPolicies from "./pages/MyPolicies";
@@ -28,16 +29,17 @@ export default function App() {
   return (
     <WalletProvider>
       <ToastProvider>
-        <div className="min-h-screen">
+        <div className="min-h-screen pb-16 md:pb-0">
           <Navbar view={view} setView={setView} />
           {page}
-          <footer className="mx-auto max-w-6xl px-6 py-10 text-center text-xs text-ink-faint">
-            SkyVerdict — an Intelligent Contract on{" "}
-            <a href="https://genlayer.com" target="_blank" rel="noreferrer" className="text-cyan hover:underline">
+          <footer className="border-t rule px-6 py-10 text-center font-mono text-xs text-ivory-soft/30 md:px-10 lg:px-16">
+            SkyVerdict — verdicts powered by{" "}
+            <a href="https://genlayer.com" target="_blank" rel="noreferrer" className="text-ivory-soft/50 hover:text-orange">
               GenLayer
             </a>
             . No trusted oracle, no claims desk — validators judge the flight data themselves.
           </footer>
+          <MobileBottomNav view={view} setView={setView} />
         </div>
       </ToastProvider>
     </WalletProvider>

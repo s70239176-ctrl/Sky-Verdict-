@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { getPolicy, getTotalPolicies, contractConfigured } from "../lib/genlayerClient";
-import DepartureBoard from "../components/DepartureBoard";
+import FlightHistory from "../components/FlightHistory";
 import EmptyState from "../components/EmptyState";
 
 const PAGE_SIZE = 20;
@@ -74,22 +74,23 @@ export default function Transparency({ openPolicy }) {
       <div className="mx-auto max-w-3xl px-6 py-14">
         <EmptyState
           title="No contract configured"
-          body="Set VITE_SKYVERDICT_ADDRESS in .env.local to load the transparency feed."
+          body="Set VITE_SKYVERDICT_ADDRESS in .env.local to load the verdict history."
         />
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-14">
-      <h1 className="text-2xl font-bold text-ink-primary">Transparency feed</h1>
-      <p className="mt-2 text-sm text-ink-dim">
-        Every policy here is read live from the contract — nothing is cached
-        or curated. Click a row's policy to see its full verdict history.
+    <div className="mx-auto max-w-4xl px-6 py-14 md:py-20">
+      <span className="eyebrow text-ivory-soft/40">Verdict history</span>
+      <h1 className="mt-2 text-display-3 font-extrabold text-ivory">VERIFIABLE OUTCOMES</h1>
+      <p className="mt-3 max-w-lg text-sm text-ivory-soft/60">
+        Every policy here is read live from the contract — nothing is cached or curated. Click a
+        row to see its full verdict history.
       </p>
 
       {notAvailable && (
-        <div className="mt-6 flex flex-col gap-3 rounded-md border border-amber/30 bg-amber/5 px-4 py-4 text-sm text-amber">
+        <div className="mt-8 flex flex-col gap-3 border border-amber/30 bg-amber/5 px-4 py-4 text-sm text-amber">
           <p>
             This deployment doesn't expose <code className="font-mono">get_total_policies</code> yet
             (it's an optional, additive view — see <code className="font-mono">docs/genvm-gotchas.md</code>).
@@ -99,36 +100,36 @@ export default function Transparency({ openPolicy }) {
             <input
               value={manualFrom}
               onChange={(e) => setManualFrom(e.target.value)}
-              className="w-20 rounded-md border border-grid bg-panel px-2 py-1.5 font-mono text-xs text-ink-primary"
+              className="w-20 border rule bg-near-black px-2 py-1.5 font-mono text-xs text-ivory"
               placeholder="From"
             />
-            <span className="text-ink-faint">–</span>
+            <span className="text-ivory-soft/30">–</span>
             <input
               value={manualTo}
               onChange={(e) => setManualTo(e.target.value)}
-              className="w-20 rounded-md border border-grid bg-panel px-2 py-1.5 font-mono text-xs text-ink-primary"
+              className="w-20 border rule bg-near-black px-2 py-1.5 font-mono text-xs text-ivory"
               placeholder="To"
             />
-            <button type="submit" className="rounded-md border border-grid px-3 py-1.5 text-xs text-ink-primary hover:border-cyan/50">
+            <button type="submit" className="border rule px-3 py-1.5 font-mono text-xs text-ivory hover:border-orange/50">
               Load
             </button>
           </form>
         </div>
       )}
 
-      <div className="mt-6">
+      <div className="mt-8">
         {loading ? (
-          <p className="font-mono text-sm text-ink-dim">Loading the feed…</p>
+          <p className="font-mono text-sm text-ivory-soft/50">Loading the feed…</p>
         ) : rows.length === 0 ? (
           <EmptyState title="No policies found in this range" body="Try a different ID range, or check back after the first policy is written." />
         ) : (
           <>
             {total !== null && (
-              <p className="mb-3 font-mono text-xs text-ink-faint">
+              <p className="mb-3 font-mono text-xs text-ivory-soft/30">
                 Showing the {rows.length} most recent of {total} total policies
               </p>
             )}
-            <DepartureBoard rows={rows} onRowClick={(row) => openPolicy(row.policyId)} />
+            <FlightHistory rows={rows} onRowClick={(row) => openPolicy(row.policyId)} />
           </>
         )}
       </div>

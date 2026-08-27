@@ -1,23 +1,28 @@
 import React from "react";
-import ConsensusRadar from "../components/ConsensusRadar";
-import StatsBar from "../components/StatsBar";
-import DepartureBoard from "../components/DepartureBoard";
+import FlightRoute from "../components/FlightRoute";
+import NetworkStatus from "../components/NetworkStatus";
+import FlightHistory from "../components/FlightHistory";
 
-const HOW_IT_WORKS = [
+const STAGES = [
   {
     n: "01",
-    title: "Buy coverage",
-    body: "Set a flight, a delay threshold, and a payout multiplier. Pay the premium as the transaction value — coverage is active immediately.",
+    title: "Monitor",
+    body: "Flight data enters the system the moment coverage is bought — airline, flight number, departure airport, scheduled times.",
   },
   {
     n: "02",
-    title: "Validators judge, independently",
-    body: "After the settlement buffer, anyone triggers evaluation. Each GenLayer validator fetches live tracker data on its own and extracts a structured verdict with an LLM — no shared oracle, no single source of truth.",
+    title: "Validate",
+    body: "After the flight lands, GenLayer validators independently fetch live tracker pages and extract a structured verdict — each one on its own, with no shared source of truth.",
   },
   {
     n: "03",
-    title: "Consensus settles the claim",
-    body: "Validators reach Optimistic-Democracy agreement on the verdict in the same transaction. If it's a payout, funds move immediately — no claims desk, no waiting.",
+    title: "Verdict",
+    body: "Validators compare decisions, not bytes, and reach Optimistic-Democracy consensus on one outcome in the same transaction.",
+  },
+  {
+    n: "04",
+    title: "Settle",
+    body: "When the delay threshold is met, the pool contract transfers funds automatically. No claims desk. Nothing to file.",
   },
 ];
 
@@ -29,78 +34,105 @@ const EXAMPLE_ROWS = [
 
 export default function Home({ setView }) {
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-24 px-6 pb-24 pt-16">
+    <div className="flex flex-col">
       {/* Hero */}
-      <section className="grid grid-cols-1 items-center gap-12 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="flex flex-col gap-6">
-          <span className="w-fit rounded-full border border-cyan/30 bg-cyan/5 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.15em] text-cyan">
-            Built on GenLayer · Optimistic Democracy
-          </span>
-          <h1 className="text-4xl font-extrabold leading-[1.1] text-ink-primary sm:text-5xl">
-            Flight delay insurance that
-            <span className="text-cyan"> settles itself.</span>
+      <section className="border-b rule px-6 pb-16 pt-16 md:px-10 md:pb-24 md:pt-24 lg:px-16">
+        <div className="mx-auto max-w-5xl">
+          <span className="eyebrow text-orange">Built on GenLayer · Optimistic Democracy</span>
+          <h1 className="mt-5 text-display-1 font-black text-ivory">
+            FLIGHT PROTECTION,
+            <br />
+            DECIDED AUTONOMOUSLY.
           </h1>
-          <p className="max-w-lg text-lg text-ink-dim">
-            No claims desk. No trusted oracle. When your flight is late,
-            independent validators check the real tracker data themselves
-            and agree on your payout — on-chain, in one transaction.
+          <p className="mt-6 max-w-xl text-lg leading-relaxed text-ivory-soft/70">
+            SkyVerdict monitors your flight in real time. When delay conditions are met, the network
+            reaches a verifiable verdict and settlement happens automatically.
           </p>
-          <div className="flex flex-wrap gap-3">
+          <div className="mt-8 flex flex-wrap gap-3">
             <button
               onClick={() => setView("buy")}
-              className="rounded-md bg-cyan px-5 py-2.5 text-sm font-semibold text-void shadow-glow hover:bg-cyan/90"
+              className="bg-orange px-6 py-3 font-mono text-xs uppercase tracking-[0.08em] font-semibold text-ink hover:bg-orange/90"
             >
-              Buy coverage
+              Protect a flight
             </button>
             <button
               onClick={() => setView("transparency")}
-              className="rounded-md border border-grid px-5 py-2.5 text-sm font-medium text-ink-primary hover:border-ink-faint"
+              className="border rule-strong px-6 py-3 font-mono text-xs uppercase tracking-[0.08em] text-ivory hover:border-orange/50"
             >
-              See the transparency feed
+              See the verdict history
             </button>
           </div>
         </div>
 
-        <div className="flex justify-center">
-          <ConsensusRadar size={260} />
+        <div className="mx-auto mt-16 max-w-5xl border rule px-6 py-8 md:px-10">
+          <FlightRoute
+            originCode="LOS"
+            originCity="Lagos"
+            destCode="LHR"
+            destCity="London"
+            flightLabel="BA 75"
+            dateLabel="31 AUG"
+            live
+            evidence={[
+              { label: "Aircraft", done: true },
+              { label: "Weather", done: true },
+              { label: "Airport", done: true },
+              { label: "Arrival", done: false },
+              { label: "Network", done: false },
+            ]}
+          />
+          <p className="mt-6 font-mono text-[10px] uppercase tracking-[0.08em] text-ivory-soft/30">
+            Illustrative — not a real policy
+          </p>
         </div>
       </section>
 
-      {/* Stats */}
-      <section>
-        <StatsBar />
-      </section>
-
-      {/* How it works — a real sequence, so numbering is earned */}
-      <section className="flex flex-col gap-8">
-        <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-ink-faint">How it works</h2>
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-          {HOW_IT_WORKS.map((s) => (
-            <div key={s.n} className="flex flex-col gap-3 rounded-lg border border-grid bg-panel/60 p-6">
-              <span className="font-mono text-xs text-cyan">{s.n}</span>
-              <h3 className="text-lg font-semibold text-ink-primary">{s.title}</h3>
-              <p className="text-sm leading-relaxed text-ink-dim">{s.body}</p>
-            </div>
-          ))}
+      {/* Four-stage story */}
+      <section className="border-b rule px-6 py-16 md:px-10 md:py-24 lg:px-16">
+        <div className="mx-auto max-w-5xl">
+          <span className="eyebrow text-ivory-soft/40">How it works</span>
+          <div className="mt-10 grid grid-cols-1 gap-x-8 gap-y-14 md:grid-cols-2">
+            {STAGES.map((s) => (
+              <div key={s.n} className="flex flex-col gap-4">
+                <span className="font-mono text-sm text-orange">{s.n}</span>
+                <h3 className="text-display-3 font-extrabold text-ivory">{s.title.toUpperCase()}</h3>
+                <p className="max-w-sm text-sm leading-relaxed text-ivory-soft/60">{s.body}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* Sample board */}
-      <section className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-ink-faint">Example verdicts</h2>
-          <span className="rounded bg-panel2 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-ink-faint">
-            Illustrative — not live data
-          </span>
+      {/* Network status */}
+      <section className="border-b rule px-6 py-16 md:px-10 md:py-24 lg:px-16">
+        <div className="mx-auto max-w-5xl">
+          <span className="eyebrow text-ivory-soft/40">Live network</span>
+          <div className="mt-6">
+            <NetworkStatus />
+          </div>
         </div>
-        <DepartureBoard rows={EXAMPLE_ROWS} />
-        <p className="text-sm text-ink-dim">
-          Want to see real ones?{" "}
-          <button onClick={() => setView("transparency")} className="text-cyan underline underline-offset-2">
-            Open the live transparency feed
-          </button>
-          .
-        </p>
+      </section>
+
+      {/* Example verdicts */}
+      <section className="px-6 py-16 md:px-10 md:py-24 lg:px-16">
+        <div className="mx-auto max-w-5xl">
+          <div className="flex items-center justify-between gap-4">
+            <span className="eyebrow text-ivory-soft/40">Example verdicts</span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ivory-soft/30">
+              Illustrative — not live data
+            </span>
+          </div>
+          <div className="mt-6">
+            <FlightHistory rows={EXAMPLE_ROWS} />
+          </div>
+          <p className="mt-4 text-sm text-ivory-soft/50">
+            Want to see real ones?{" "}
+            <button onClick={() => setView("transparency")} className="text-orange underline underline-offset-4">
+              Open the live verdict history
+            </button>
+            .
+          </p>
+        </div>
       </section>
     </div>
   );

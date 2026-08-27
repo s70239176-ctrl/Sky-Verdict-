@@ -38,12 +38,12 @@ export function ToastProvider({ children }) {
               initial={{ opacity: 0, y: 12, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.98 }}
-              className={`rounded-lg border px-4 py-3 text-sm shadow-lg backdrop-blur-md ${
+              className={`border px-4 py-3 text-sm shadow-lg backdrop-blur-md ${
                 t.tone === "success"
-                  ? "bg-cyan/10 border-cyan/40 text-cyan"
+                  ? "bg-green/10 border-green/40 text-green"
                   : t.tone === "error"
-                  ? "bg-signal-red/10 border-signal-red/40 text-signal-red"
-                  : "bg-panel/90 border-grid text-ink-primary"
+                  ? "bg-amber/10 border-amber/40 text-amber"
+                  : "bg-near-black/95 border-ivory-soft/15 text-ivory"
               }`}
               role="status"
             >

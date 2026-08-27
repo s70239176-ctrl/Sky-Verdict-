@@ -1,0 +1,5 @@
+[33m1189da69[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mredesign-2026-frontend[m[33m, [m[1;31morigin/redesign-2026-frontend[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m Redesign frontend: 2026 aviation-control/editorial UI (Verdict Room, design tokens, no data changes)
+[33ma12b5919[m Redesign frontend: 2026 aviation-control/editorial UI (Verdict Room, design tokens, no data changes)
+[33md34b2430[m Fix MetaMask wallet connect: ensure correct network before transacting
+[33m66539a0d[m Fix genlayer-js calls: use functionName instead of method
+[33md5ff70f2[m Pin genlayer-js to 1.1.8 (matches GenLayer's reference app)

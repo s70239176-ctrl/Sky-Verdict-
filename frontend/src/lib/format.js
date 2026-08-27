@@ -29,13 +29,23 @@ export function minutesToHuman(min) {
 }
 
 export const STATUS_META = {
-  ACTIVE: { label: "Active", color: "text-cyan", dot: "bg-cyan" },
-  PAID: { label: "Paid out", color: "text-amber", dot: "bg-amber" },
-  EXPIRED_NO_PAYOUT: { label: "Expired — no payout", color: "text-ink-dim", dot: "bg-ink-faint" },
-  REFUNDED: { label: "Refunded", color: "text-ink-dim", dot: "bg-ink-faint" },
-  INDETERMINATE: { label: "Awaiting appeal", color: "text-signal-red", dot: "bg-signal-red" },
+  ACTIVE: { label: "Monitoring", color: "text-orange", dot: "bg-orange", verb: "MONITORING" },
+  PAID: { label: "Settled — paid", color: "text-green", dot: "bg-green", verb: "DELAY VERIFIED" },
+  EXPIRED_NO_PAYOUT: { label: "Verified — no payout", color: "text-green", dot: "bg-green", verb: "ON TIME" },
+  REFUNDED: { label: "Refunded", color: "text-ivory-soft/70", dot: "bg-ivory-soft/40", verb: "REFUNDED" },
+  INDETERMINATE: { label: "Awaiting appeal", color: "text-amber", dot: "bg-amber", verb: "NO QUORUM" },
 };
 
 export function statusMeta(status) {
-  return STATUS_META[status] || { label: status || "Unknown", color: "text-ink-dim", dot: "bg-ink-faint" };
+  return STATUS_META[status] || { label: status || "Unknown", color: "text-ivory-soft/70", dot: "bg-ivory-soft/40", verb: status || "UNKNOWN" };
+}
+
+export const DECISION_META = {
+  PAYOUT: { headline: "DELAY VERIFIED", color: "text-green" },
+  NO_PAYOUT: { headline: "ON TIME", color: "text-green" },
+  NO_QUORUM: { headline: "NO QUORUM", color: "text-amber" },
+};
+
+export function decisionMeta(decision) {
+  return DECISION_META[decision] || { headline: decision || "PENDING", color: "text-ivory-soft" };
 }
