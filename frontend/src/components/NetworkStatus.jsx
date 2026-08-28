@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { getPool, getTotalPolicies, contractConfigured } from "../lib/genlayerClient";
+import { formatGen } from "../lib/format";
 
 function Stat({ label, value, accent = "text-ivory" }) {
   return (
@@ -64,10 +65,10 @@ export default function NetworkStatus() {
         </span>
       </div>
       <div className="grid grid-cols-2 gap-6">
-        <Stat label="Pool balance" value={pool ? pool.pool_balance.toLocaleString() : "—"} accent="text-blue" />
+        <Stat label="Pool balance" value={pool ? formatGen(pool.pool_balance) : "—"} accent="text-blue" />
         <Stat label="Policies written" value={total !== null ? total.toLocaleString() : "—"} accent="text-orange" />
-        <Stat label="Protocol fees" value={pool ? pool.protocol_fees_accrued.toLocaleString() : "—"} />
-        <Stat label="Creator fees" value={pool ? pool.creator_fees_accrued.toLocaleString() : "—"} />
+        <Stat label="Protocol fees" value={pool ? formatGen(pool.protocol_fees_accrued) : "—"} />
+        <Stat label="Creator fees" value={pool ? formatGen(pool.creator_fees_accrued) : "—"} />
       </div>
     </div>
   );

@@ -4,9 +4,19 @@ export function shortAddress(addr) {
 }
 
 export function formatGen(wei) {
-  const n = Number(wei);
-  if (!Number.isFinite(n)) return "—";
-  return `${n.toLocaleString()} GEN wei`;
+  // BigInt, not Number — a wei-scale value (18 decimals) can easily
+  // exceed Number.MAX_SAFE_INTEGER (~9 quadrillion) and silently lose
+  // precision if parsed as a plain JS number. This still displays raw
+  // wei (matching what the contract actually stores and what's been
+  // verified end-to-end throughout this project) — it just does so
+  // accurately at any scale, small test amounts or large ones alike.
+  let big;
+  try {
+    big = BigInt(typeof wei === "string" ? wei : Math.trunc(Number(wei)));
+  } catch {
+    return "—";
+  }
+  return `${big.toLocaleString()} GEN wei`;
 }
 
 export function formatUnixUtc(ts) {

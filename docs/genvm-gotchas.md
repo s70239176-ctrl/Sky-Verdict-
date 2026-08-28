@@ -309,3 +309,32 @@ Frontend: new `create_trip` wrapper in `genlayerClient.js` (mirrors
 `create_policy`'s pattern exactly), a new `BuyTrip.jsx` page, and
 `MyPolicies.jsx` now groups owned policies by `trip_id` into a bundled
 card per trip instead of showing legs as unrelated individual policies.
+
+## 14. formatGen precision loss above Number.MAX_SAFE_INTEGER
+`formatGen` used `Number(wei).toLocaleString()`, and `NetworkStatus.jsx`
+called `.toLocaleString()` directly on the raw value from `get_pool()` —
+both unsafe once a wei-scale value exceeds
+`Number.MAX_SAFE_INTEGER` (~9 quadrillion; wei-scale 18-decimal values
+cross that easily). Fixed by parsing through `BigInt` instead (handles
+string, number, or bigint input) in `formatGen`, and routed
+`NetworkStatus.jsx`'s pool/fee stats through it instead of formatting
+raw numbers directly.
+
+Not yet audited: `PolicyDetail.jsx`'s settlement-amount calculation
+(`Number(policy.premium) * Number(policy.payout_multiplier_bps) / 10000`)
+and the theoretical-max-payout previews in `BuyCoverage.jsx`/`BuyTrip.jsx`
+still use plain `Number()` math. Low practical risk today (those inputs
+are either user-typed small numbers, or the display-only settlement
+figure), but worth a BigInt pass if premiums ever operate at real
+GEN-with-18-decimals scale rather than the small test values used
+throughout this project.
+
+Separately: a manual Studio test of `create_trip` showed `pool_balance`
+at a 10^18-larger scale than every previous test in this project. Given
+the live frontend has already verified small-scale, unscaled values work
+correctly end-to-end (buy → evaluate → appeal → refund, multiple
+rounds), this is believed to be Studio's own manual "transaction value"
+input auto-converting a typed amount to wei — a Studio UI convention,
+not a frontend bug — but this is not yet confirmed by actually buying a
+policy through the live frontend and re-checking `get_pool()`. Do that
+before assuming either way.
