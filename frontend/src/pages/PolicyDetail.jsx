@@ -5,6 +5,7 @@ import VerdictStatus from "../components/VerdictStatus";
 import ValidatorConsensus from "../components/ValidatorConsensus";
 import EvidenceTimeline from "../components/EvidenceTimeline";
 import SettlementStatus from "../components/SettlementStatus";
+import ReasoningPanel from "../components/ReasoningPanel";
 import { useWallet } from "../context/WalletContext";
 import { useToast } from "../context/ToastContext";
 
@@ -284,6 +285,12 @@ export default function PolicyDetail({ policyId, setView }) {
       <div className="mt-8">
         <EvidenceTimeline items={timelineItems} />
       </div>
+
+      {verdict && (
+        <div className="mt-8">
+          <ReasoningPanel verdict={verdict} thresholdMinutes={policy.threshold_minutes} />
+        </div>
+      )}
 
       {isPending && (
         <div className="mt-8 border border-orange/30 bg-orange/5 px-6 py-6">

@@ -89,6 +89,19 @@ export default function Transparency({ openPolicy }) {
         row to see its full verdict history.
       </p>
 
+      <div className="mt-6 border border-blue/20 bg-blue/5 px-5 py-4 text-sm text-ivory-soft/70">
+        <p className="font-medium text-ivory">How a verdict gets decided, in short</p>
+        <p className="mt-1.5 text-ivory-soft/60">
+          Each validator independently fetches the flight's tracker pages and extracts a status —
+          no shared source of truth between them. The network only proceeds once at least two
+          independent reads agree closely enough to reach quorum; delay is the median of those
+          reads (resistant to one source hallucinating an outlier), and cancellation is a majority
+          vote. If quorum isn't reached, the verdict is <span className="font-mono text-amber">NO_QUORUM</span> — a
+          deliberate refusal to guess, not a failure. Open any policy above to see this applied to
+          its real numbers.
+        </p>
+      </div>
+
       {notAvailable && (
         <div className="mt-8 flex flex-col gap-3 border border-amber/30 bg-amber/5 px-4 py-4 text-sm text-amber">
           <p>

@@ -252,3 +252,19 @@ this plainly rather than implying a privacy guarantee the architecture
 doesn't have. A real "my policies" index (rather than a linear scan) is
 worth building before this holds meaningful volume — noted as a known
 limitation.
+
+## 12. Transparent Reasoning Explorer — scoped to what the contract actually stores
+Added `ReasoningPanel.jsx` (in the Verdict Room) and a short consensus
+explainer on the Verdict History page — the "not a black box" story that's
+GenLayer's actual differentiator, made visible in the product.
+
+Deliberately narrower than the original pitch for this feature: the
+contract's `_derive_verdict` only ever returns the aggregate outcome
+(`decision`, `cancelled`, `delay_minutes`, `sources_used`,
+`sources_total`) — it does not store which URL each individual validator
+fetched, nor any raw LLM reasoning text. So this shows the real,
+deterministic aggregation rule (median delay, majority-vote cancellation,
+quorum threshold) applied to a policy's real numbers — not invented
+per-validator transcripts. If genuine per-validator/per-source
+attribution is wanted later, that requires a contract change to persist
+more data in the verdict, not just a frontend addition.
