@@ -87,6 +87,7 @@ class Policy:
     status: str
     last_verdict_json: str     # last structured verdict, for audit/appeal
     appeal_used: bool
+    trip_id: u256              # 0 == standalone policy; >0 groups legs of one trip
 
 
 @allow_storage
@@ -110,6 +111,7 @@ class SkyVerdict(gl.Contract):
 
     policies: TreeMap[u256, Policy]
     next_policy_id: u256
+    next_trip_id: u256         # groups multiple Policy legs into one trip
 
     pool_balance: u256          # GEN held for future payouts
     protocol_fees_accrued: u256
@@ -129,6 +131,7 @@ class SkyVerdict(gl.Contract):
         # empty TreeMap automatically — do not reassign it with a bare
         # TreeMap(), which loses the field's storage type parameters.
         self.next_policy_id = u256(1)
+        self.next_trip_id = u256(1)
         self.pool_balance = u256(0)
         self.protocol_fees_accrued = u256(0)
         self.creator_fees_accrued = u256(0)
@@ -225,9 +228,9 @@ fences, no commentary:
     # Policy creation
     # -----------------------------------------------------------------
 
-    @gl.public.write.payable
-    def create_policy(
+    def _open_policy(
         self,
+        holder: Address,
         airline_code: str,
         flight_number: str,
         departure_airport: str,
@@ -236,12 +239,20 @@ fences, no commentary:
         threshold_minutes: int,
         payout_multiplier_bps: int,
         max_coverage: int,
+        premium: int,
+        trip_id: u256,
     ) -> u256:
-        self._require_not_paused()
-
-        premium = gl.message.value
+        """
+        Shared, deterministic policy-opening logic — used by both
+        create_policy (trip_id=0) and create_trip (one shared trip_id
+        across several legs). No @gl.public decorator: this is a plain
+        internal helper, not itself an entrypoint. Pulled out verbatim
+        from the original create_policy body so single-flight behavior
+        is unchanged; only the premium/trip_id are now parameters
+        instead of always reading gl.message.value / hardcoding 0.
+        """
         if premium <= 0:
-            raise Exception("SkyVerdict: premium (message value) must be > 0")
+            raise Exception("SkyVerdict: premium must be > 0")
 
         if scheduled_arrival_utc <= scheduled_departure_utc:
             raise Exception("SkyVerdict: arrival must be after departure")
@@ -278,7 +289,7 @@ fences, no commentary:
 
         policy = Policy(
             policy_id=policy_id,
-            holder=gl.message.sender_address,
+            holder=holder,
             airline_code=airline_code,
             flight_number=flight_number,
             departure_airport=departure_airport,
@@ -292,9 +303,105 @@ fences, no commentary:
             status=POLICY_STATUS_ACTIVE,
             last_verdict_json="",
             appeal_used=False,
+            trip_id=trip_id,
         )
         self.policies[policy_id] = policy
         return policy_id
+
+    @gl.public.write.payable
+    def create_policy(
+        self,
+        airline_code: str,
+        flight_number: str,
+        departure_airport: str,
+        scheduled_departure_utc: int,
+        scheduled_arrival_utc: int,
+        threshold_minutes: int,
+        payout_multiplier_bps: int,
+        max_coverage: int,
+    ) -> u256:
+        self._require_not_paused()
+        return self._open_policy(
+            holder=gl.message.sender_address,
+            airline_code=airline_code,
+            flight_number=flight_number,
+            departure_airport=departure_airport,
+            scheduled_departure_utc=scheduled_departure_utc,
+            scheduled_arrival_utc=scheduled_arrival_utc,
+            threshold_minutes=threshold_minutes,
+            payout_multiplier_bps=payout_multiplier_bps,
+            max_coverage=max_coverage,
+            premium=gl.message.value,
+            trip_id=u256(0),
+        )
+
+    @gl.public.write.payable
+    def create_trip(
+        self,
+        airline_codes: list[str],
+        flight_numbers: list[str],
+        departure_airports: list[str],
+        scheduled_departures_utc: list[int],
+        scheduled_arrivals_utc: list[int],
+        threshold_minutes_list: list[int],
+        payout_multiplier_bps_list: list[int],
+        max_coverage_list: list[int],
+    ) -> u256:
+        """
+        Buys coverage for several flight legs in one transaction, sharing
+        one trip_id. Each leg becomes its own ordinary Policy row —
+        evaluate_claim/appeal/claim_refund work on trip legs exactly like
+        any other policy, completely unchanged. The one transaction's
+        premium (gl.message.value) is split evenly across legs, with the
+        last leg absorbing the integer-division remainder so no GEN wei
+        is silently lost to rounding.
+        """
+        self._require_not_paused()
+
+        n = len(airline_codes)
+        if n < 2:
+            raise Exception(
+                "SkyVerdict: create_trip requires at least 2 legs — use create_policy for a single flight"
+            )
+        leg_lists = (
+            flight_numbers,
+            departure_airports,
+            scheduled_departures_utc,
+            scheduled_arrivals_utc,
+            threshold_minutes_list,
+            payout_multiplier_bps_list,
+            max_coverage_list,
+        )
+        if any(len(lst) != n for lst in leg_lists):
+            raise Exception("SkyVerdict: all trip leg lists must be the same length")
+
+        total_premium = gl.message.value
+        if total_premium <= 0:
+            raise Exception("SkyVerdict: premium (message value) must be > 0")
+
+        trip_id = self.next_trip_id
+        self.next_trip_id = u256(int(self.next_trip_id) + 1)
+
+        holder = gl.message.sender_address
+        base_leg_premium = total_premium // n
+        for i in range(n):
+            leg_premium = (
+                base_leg_premium if i < n - 1 else (total_premium - base_leg_premium * (n - 1))
+            )
+            self._open_policy(
+                holder=holder,
+                airline_code=airline_codes[i],
+                flight_number=flight_numbers[i],
+                departure_airport=departure_airports[i],
+                scheduled_departure_utc=scheduled_departures_utc[i],
+                scheduled_arrival_utc=scheduled_arrivals_utc[i],
+                threshold_minutes=threshold_minutes_list[i],
+                payout_multiplier_bps=payout_multiplier_bps_list[i],
+                max_coverage=max_coverage_list[i],
+                premium=leg_premium,
+                trip_id=trip_id,
+            )
+        return trip_id
 
     # -----------------------------------------------------------------
     # Claim evaluation — the nondeterministic core
@@ -624,6 +731,7 @@ fences, no commentary:
             "status": policy.status,
             "last_verdict_json": policy.last_verdict_json,
             "appeal_used": policy.appeal_used,
+            "trip_id": int(policy.trip_id),
         }
 
     @gl.public.view

@@ -121,7 +121,10 @@ export default function BuyCoverage({ setView, openPolicy }) {
       </h1>
       <p className="mt-2 text-sm text-ivory-soft/50">
         Coverage activates the moment your premium is paid. Nothing here is adjudicated by us —
-        validators judge the real flight data later.
+        validators judge the real flight data later.{" "}
+        <button onClick={() => setView("buy-trip")} className="text-orange underline underline-offset-4">
+          Covering more than one flight?
+        </button>
       </p>
 
       {/* Step indicator */}

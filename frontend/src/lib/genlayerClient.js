@@ -213,6 +213,31 @@ export async function createPolicy({
   });
 }
 
+// legs: array of { airlineCode, flightNumber, departureAirport,
+// scheduledDepartureUtc, scheduledArrivalUtc, thresholdMinutes,
+// payoutMultiplierBps, maxCoverage }. totalPremiumWei is split evenly
+// across legs by the contract itself (see create_trip in SkyVerdict.py) —
+// the frontend doesn't do any of that math, just sends the total value.
+export async function createTrip(legs, totalPremiumWei) {
+  requireAddress();
+  const c = requireClient();
+  return c.writeContract({
+    address: CONTRACT_ADDRESS,
+    functionName: "create_trip",
+    args: [
+      legs.map((l) => l.airlineCode),
+      legs.map((l) => l.flightNumber),
+      legs.map((l) => l.departureAirport),
+      legs.map((l) => Number(l.scheduledDepartureUtc)),
+      legs.map((l) => Number(l.scheduledArrivalUtc)),
+      legs.map((l) => Number(l.thresholdMinutes)),
+      legs.map((l) => Number(l.payoutMultiplierBps)),
+      legs.map((l) => Number(l.maxCoverage)),
+    ],
+    value: totalPremiumWei,
+  });
+}
+
 export async function evaluateClaim(policyId, sourceUrls) {
   requireAddress();
   const c = requireClient();

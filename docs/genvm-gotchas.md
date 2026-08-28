@@ -268,3 +268,44 @@ quorum threshold) applied to a policy's real numbers — not invented
 per-validator transcripts. If genuine per-validator/per-source
 attribution is wanted later, that requires a contract change to persist
 more data in the verdict, not just a frontend addition.
+
+## 13. Multi-flight ("trip") coverage — minimal-risk contract redeploy
+Added real portfolio coverage: `create_trip(...)` buys coverage for
+several flight legs in one transaction, sharing one `trip_id`. This is a
+genuine contract change requiring redeploy (new storage field on
+`Policy`), so it was deliberately designed to touch as little of the
+proven, hard-won code as possible:
+
+- `evaluate_claim`/`appeal`/`claim_refund`/the nondet consensus block are
+  **completely untouched**. Each trip leg is just an ordinary `Policy`
+  row tagged with a nonzero `trip_id` — its claim lifecycle is identical
+  to any single-flight policy.
+- Only new contract surface: one scalar `trip_id: u256` field on `Policy`
+  (same pattern as every other scalar field already working), one
+  `next_trip_id: u256` counter (same pattern as `next_policy_id`), and
+  `create_trip`'s parameters are plain `list[str]`/`list[int]` — the
+  exact calldata pattern already proven safe in `evaluate_claim`'s
+  `source_urls: list[str]` (see gotcha #4 — DynArray is a storage-only
+  container, never a parameter type). No new nested storage containers.
+- `create_policy`'s original body was extracted into a shared internal
+  helper (`_open_policy`) with zero behavioral change — `create_policy`
+  itself now just calls it with `trip_id=0`. Verified via
+  `tests/direct/smoke_create_trip.py`, a standalone stdlib-only script
+  (pytest isn't installable in this sandbox — no network) that drives
+  the same offline mock SDK pattern as `tests/direct/conftest.py`
+  directly. All 11 checks pass, including a fee-math regression check
+  against the original single-flight numbers and remainder-handling on
+  an unevenly-divisible premium split.
+
+**This still needs a real redeploy and re-verification in Studio** —
+the offline mock cannot catch GenVM-runtime-specific issues (the same
+category of surprise as gotchas #1–#6: `dataclass` import, storage
+zero-init, etc.). Deploy, then sanity-check in this order before trusting
+it: `create_policy` still works exactly as before (regression), then
+`create_trip` with 2 legs, then confirm both legs show up under
+`get_policy` with the same `trip_id` and sequential `policy_id`s.
+
+Frontend: new `create_trip` wrapper in `genlayerClient.js` (mirrors
+`create_policy`'s pattern exactly), a new `BuyTrip.jsx` page, and
+`MyPolicies.jsx` now groups owned policies by `trip_id` into a bundled
+card per trip instead of showing legs as unrelated individual policies.

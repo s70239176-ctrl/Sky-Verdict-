@@ -99,6 +99,16 @@ export default function MyPolicies({ openPolicy, setView }) {
   const ownedIds = new Set(owned.map((p) => p.policy_id));
   const trackedOnly = tracked.filter((p) => !ownedIds.has(p.policy_id));
 
+  // Group owned policies by trip_id (0 == standalone, not part of a trip —
+  // see create_trip in SkyVerdict.py).
+  const standalone = owned.filter((p) => !p.trip_id);
+  const tripGroups = {};
+  owned
+    .filter((p) => p.trip_id)
+    .forEach((p) => {
+      (tripGroups[p.trip_id] = tripGroups[p.trip_id] || []).push(p);
+    });
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-14 md:py-20">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b rule pb-6">
@@ -107,7 +117,10 @@ export default function MyPolicies({ openPolicy, setView }) {
           <h1 className="mt-2 text-display-3 font-extrabold text-ivory">MY FLIGHTS</h1>
           <p className="mt-2 max-w-lg text-sm text-ivory-soft/50">
             Matched to your connected wallet using the contract's own record of who bought each
-            policy — not a local list, so it holds up across browsers and devices.
+            policy — not a local list, so it holds up across browsers and devices.{" "}
+            <button onClick={() => setView("buy-trip")} className="text-orange underline underline-offset-4">
+              Protect a trip
+            </button>
           </p>
         </div>
         <form onSubmit={handleAdd} className="flex items-center gap-2">
@@ -171,10 +184,28 @@ export default function MyPolicies({ openPolicy, setView }) {
                     }
                   />
                 ) : (
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    {owned.map((p) => (
-                      <FlightCard key={p.policy_id} policy={p} onOpen={() => openPolicy(p.policy_id)} />
+                  <div className="flex flex-col gap-6">
+                    {Object.entries(tripGroups).map(([tripId, legs]) => (
+                      <div key={`trip-${tripId}`} className="border rule px-4 py-4">
+                        <div className="mb-3 flex items-center justify-between">
+                          <span className="font-mono text-xs uppercase tracking-[0.06em] text-orange">
+                            Trip #{tripId} · {legs.length} flights
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {legs.map((p) => (
+                            <FlightCard key={p.policy_id} policy={p} onOpen={() => openPolicy(p.policy_id)} />
+                          ))}
+                        </div>
+                      </div>
                     ))}
+                    {standalone.length > 0 && (
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        {standalone.map((p) => (
+                          <FlightCard key={p.policy_id} policy={p} onOpen={() => openPolicy(p.policy_id)} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </section>

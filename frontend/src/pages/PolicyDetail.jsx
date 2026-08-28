@@ -253,6 +253,11 @@ export default function PolicyDetail({ policyId, setView }) {
           <p className="mt-1 text-sm text-ivory-soft/50">
             {policy.departure_airport} · scheduled arrival {formatUnixUtc(policy.scheduled_arrival_utc)}
           </p>
+          {policy.trip_id > 0 && (
+            <span className="mt-2 inline-block border border-orange/30 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.06em] text-orange">
+              Part of trip #{policy.trip_id}
+            </span>
+          )}
         </div>
         <VerdictStatus status={policy.status} decision={verdict?.decision} />
       </div>
