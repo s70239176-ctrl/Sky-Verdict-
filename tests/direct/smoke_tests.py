@@ -1,5 +1,6 @@
 """
-Standalone smoke test for the create_trip / multi-flight change.
+Standalone smoke tests for create_trip (multi-flight) and
+create_policy_from_text (natural-language policy creation).
 
 Not pytest-based (this sandbox has no network to install pytest) — drives
 the exact same mock genlayer SDK pattern as tests/direct/conftest.py
@@ -80,7 +81,7 @@ class _FakeDynArrayType(FakeDynArray):
         return cls
 
 
-def build_contract():
+def build_contract(fake_exec_prompt=None):
     mod = types.ModuleType("genlayer")
     fake_message = FakeMessage()
     fake_evm = FakeEVM()
@@ -97,7 +98,7 @@ def build_contract():
 
         class nondet:
             web = None
-            exec_prompt = None
+            exec_prompt = staticmethod(fake_exec_prompt) if fake_exec_prompt else None
 
         class Contract:
             def __init_subclass__(cls, **kwargs):
@@ -215,3 +216,97 @@ except Exception as e:
     check(f"mismatched-length lists rejected ({e})", "same length" in str(e))
 
 print("\nAll create_trip smoke checks passed.")
+
+# --- 4. create_policy_from_text: valid extraction, no explicit cap ---------
+def fake_exec_prompt_valid(prompt, response_format=None):
+    return {
+        "ok": True,
+        "airline_code": "DL",
+        "flight_number": "202",
+        "departure_airport": "JFK",
+        "threshold_minutes": 90,
+        "payout_multiplier_bps": 30000,  # "3x premium"
+        "max_coverage": 0,  # not stated -> should default to premium * multiplier
+        "reason": "",
+    }
+
+c2, msg2 = build_contract(fake_exec_prompt=fake_exec_prompt_valid)
+msg2.value = 500
+pid = c2.create_policy_from_text(
+    description="Cover DL202 from JFK delayed more than 90 minutes for up to 3x premium.",
+    scheduled_departure_utc=2_000_000_000,
+    scheduled_arrival_utc=2_000_010_000,
+)
+check("create_policy_from_text creates policy_id 1", int(pid) == 1)
+p = c2.get_policy(1)
+check("extracted airline/flight/airport landed correctly", (p["airline_code"], p["flight_number"], p["departure_airport"]) == ("DL", "202", "JFK"))
+check("extracted threshold_minutes landed correctly", p["threshold_minutes"] == 90)
+check("extracted payout_multiplier_bps landed correctly", p["payout_multiplier_bps"] == 30000)
+# unstated max_coverage defaults to the theoretical max: net-of-fee premium
+# isn't used for this bound (matches _open_policy: bound is on GROSS premium)
+expected_max_coverage = 500 * 30000 // 10000
+check(f"unstated max_coverage defaulted to premium*multiplier ({expected_max_coverage})", p["max_coverage"] == expected_max_coverage)
+
+# --- 5. create_policy_from_text: explicit max_coverage stated ---------------
+def fake_exec_prompt_with_cap(prompt, response_format=None):
+    return {
+        "ok": True,
+        "airline_code": "AA",
+        "flight_number": "100",
+        "departure_airport": "ORD",
+        "threshold_minutes": 60,
+        "payout_multiplier_bps": 20000,
+        "max_coverage": 400,  # explicitly stated, below the theoretical max
+        "reason": "",
+    }
+
+c3, msg3 = build_contract(fake_exec_prompt=fake_exec_prompt_with_cap)
+msg3.value = 500
+pid3 = c3.create_policy_from_text(
+    description="Cover AA100 from ORD, threshold 60 min, 2x, max 400.",
+    scheduled_departure_utc=2_000_000_000,
+    scheduled_arrival_utc=2_000_010_000,
+)
+p3 = c3.get_policy(int(pid3))
+check("explicitly stated max_coverage is honored, not overridden", p3["max_coverage"] == 400)
+
+# --- 6. create_policy_from_text: incomplete extraction fails closed --------
+def fake_exec_prompt_incomplete(prompt, response_format=None):
+    return {
+        "ok": True,  # model claims success, but required fields are missing —
+        "airline_code": "",  # this tests the contract's OWN re-validation,
+        "flight_number": "",  # not just trusting the model's self-report
+        "departure_airport": "",
+        "threshold_minutes": 0,
+        "payout_multiplier_bps": 0,
+        "max_coverage": 0,
+        "reason": "",
+    }
+
+c4, msg4 = build_contract(fake_exec_prompt=fake_exec_prompt_incomplete)
+msg4.value = 500
+try:
+    c4.create_policy_from_text(
+        description="cover my flight please",
+        scheduled_departure_utc=2_000_000_000,
+        scheduled_arrival_utc=2_000_010_000,
+    )
+    check("incomplete extraction rejected despite model's own ok:true", False)
+except Exception as e:
+    check(f"incomplete extraction rejected, fails closed ({e})", "couldn't understand" in str(e))
+check("no policy was created on the failed attempt (next_policy_id unchanged)", int(c4.next_policy_id) == 1)
+
+# --- 7. create_policy_from_text: arrival before departure rejected up front -
+c5, msg5 = build_contract(fake_exec_prompt=fake_exec_prompt_valid)
+msg5.value = 500
+try:
+    c5.create_policy_from_text(
+        description="Cover DL202 from JFK delayed more than 90 minutes for up to 3x premium.",
+        scheduled_departure_utc=2_000_010_000,
+        scheduled_arrival_utc=2_000_000_000,  # before departure
+    )
+    check("arrival-before-departure rejected", False)
+except Exception as e:
+    check(f"arrival-before-departure rejected before any LLM call ({e})", "arrival must be after departure" in str(e))
+
+print("\nAll create_policy_from_text smoke checks passed.")

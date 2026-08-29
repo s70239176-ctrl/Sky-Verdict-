@@ -338,3 +338,79 @@ input auto-converting a typed amount to wei — a Studio UI convention,
 not a frontend bug — but this is not yet confirmed by actually buying a
 policy through the live frontend and re-checking `get_pool()`. Do that
 before assuming either way.
+
+## 15. Natural-language policy creation — new nondet code, contained deliberately
+Added `create_policy_from_text(description, scheduled_departure_utc,
+scheduled_arrival_utc)`. This is genuinely new nondet (LLM) territory,
+unlike gotcha #13's `create_trip` — so it was scoped narrowly on purpose:
+
+- **New, isolated method only.** `create_policy`, `create_trip`, and
+  `evaluate_claim` are completely untouched.
+- **Reuses evaluate_claim's exact proven consensus pattern**
+  (`gl.vm.run_nondet` with a hand-written leader/validator pair) rather
+  than `gl.eq_principle`'s canned helpers — those were only ever quoted
+  from a generic doc example early in this project, never actually
+  exercised against this deployment, so they're an unknown, not a
+  proven pattern. Also reuses `_fence` verbatim for the same
+  prompt-injection defense already proven for web content, applied here
+  to the customer's own free-text description.
+- **The LLM only extracts, never decides.** Every extracted field still
+  passes through `_open_policy`'s existing validation (arrival after
+  departure, threshold > 0, coverage <= premium × multiplier) — a bad or
+  manipulated extraction gets rejected by validation that already
+  exists, not silently accepted.
+- **Exact-match consensus, not tolerant.** `evaluate_claim` allows ±15
+  minutes of disagreement on a delay estimate; this requires byte-for-
+  byte structural agreement across every extracted field, since these
+  are financial terms (a policy's threshold and payout multiplier), not
+  a delay estimate — "close enough" isn't good enough here. Disagreement
+  fails the transaction closed: no policy, no charge.
+- **Departure/arrival times are explicit numeric arguments, not
+  LLM-parsed.** Resolving relative dates ("tomorrow", "next Friday")
+  reliably enough for independent validators to agree is a much harder,
+  flakier problem than the structured entity extraction this method
+  actually needs — so the UI collects those two timestamps the normal
+  way, same as `create_policy`, and only the qualitative coverage terms
+  (airline, flight number, airport, threshold, multiplier, optional cap)
+  go through the LLM.
+- **Belt-and-suspenders re-validation.** The contract does not trust the
+  model's own `"ok": true` self-assessment — it independently checks
+  that the required fields are actually non-empty/positive before
+  proceeding, since a confidently-wrong `"ok": true` with blank fields is
+  exactly the kind of thing an LLM can produce.
+
+**Known residual risk, accepted deliberately rather than ignored**: the
+customer's own description text is user-controlled and could contain a
+self-serving prompt-injection attempt (e.g. text trying to talk the
+model into an inflated multiplier or coverage cap for that same user's
+own policy). This is fenced the same way web content is, but fencing
+reduces rather than eliminates the risk. The blast radius is bounded by
+what already existed before this change: `_open_policy` still caps
+`max_coverage` at `premium * payout_multiplier_bps / BPS_DENOMINATOR`
+regardless of what was extracted, so a successful injection can only
+secure unusually generous terms *for that user's own, self-funded
+policy* — it cannot extract value beyond what that user personally paid
+for, and payout is still bounded by the pool's actual liquidity (an
+already-documented, pre-existing limitation — see docs/reliability.md).
+
+Verified via `tests/direct/smoke_tests.py` (renamed from
+`smoke_create_trip.py` — now covers both features), which mocks
+`gl.nondet.exec_prompt` to test the surrounding contract logic (not LLM
+quality, which can't be tested offline): a valid extraction creating a
+correct policy, an explicit `max_coverage` being honored rather than
+overridden, an unstated one correctly defaulting to the multiplier's
+ceiling, an incomplete extraction failing closed with zero side effects
+despite the model claiming `"ok": true`, and arrival-before-departure
+rejected before any LLM call happens at all. 18/18 checks pass across
+both features.
+
+**This still needs real deployment verification** — the offline mock
+can't test actual LLM extraction quality or real GenVM consensus
+behavior on this new code path. Deploy, then test with a genuinely clear
+description first (matching the UI's own example), and separately test
+a deliberately incomplete one to confirm it fails closed as designed
+rather than silently guessing.
+
+Frontend: new `createPolicyFromText` wrapper in `genlayerClient.js`
+(mirrors `create_policy`'s pattern) and a new `BuyByDescription.jsx`
+page, linked from the plain "Protect a flight" form.

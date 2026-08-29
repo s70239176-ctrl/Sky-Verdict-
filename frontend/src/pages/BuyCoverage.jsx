@@ -124,6 +124,10 @@ export default function BuyCoverage({ setView, openPolicy }) {
         validators judge the real flight data later.{" "}
         <button onClick={() => setView("buy-trip")} className="text-orange underline underline-offset-4">
           Covering more than one flight?
+        </button>{" "}
+        ·{" "}
+        <button onClick={() => setView("buy-text")} className="text-orange underline underline-offset-4">
+          Or just describe it in plain English
         </button>
       </p>
 

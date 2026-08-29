@@ -238,6 +238,20 @@ export async function createTrip(legs, totalPremiumWei) {
   });
 }
 
+// The LLM only ever extracts parameters into create_policy's own schema —
+// see create_policy_from_text in SkyVerdict.py. departureUtc/arrivalUtc
+// stay as explicit numeric args (not parsed from text) deliberately.
+export async function createPolicyFromText({ description, scheduledDepartureUtc, scheduledArrivalUtc, premiumWei }) {
+  requireAddress();
+  const c = requireClient();
+  return c.writeContract({
+    address: CONTRACT_ADDRESS,
+    functionName: "create_policy_from_text",
+    args: [description, Number(scheduledDepartureUtc), Number(scheduledArrivalUtc)],
+    value: premiumWei,
+  });
+}
+
 export async function evaluateClaim(policyId, sourceUrls) {
   requireAddress();
   const c = requireClient();

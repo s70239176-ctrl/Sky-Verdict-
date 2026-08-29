@@ -6,6 +6,7 @@ import MobileBottomNav from "./components/MobileBottomNav";
 import Home from "./pages/Home";
 import BuyCoverage from "./pages/BuyCoverage";
 import BuyTrip from "./pages/BuyTrip";
+import BuyByDescription from "./pages/BuyByDescription";
 import MyPolicies from "./pages/MyPolicies";
 import PolicyDetail from "./pages/PolicyDetail";
 import Transparency from "./pages/Transparency";
@@ -23,6 +24,7 @@ export default function App() {
   if (view === "home") page = <Home setView={setView} />;
   else if (view === "buy") page = <BuyCoverage setView={setView} openPolicy={openPolicy} />;
   else if (view === "buy-trip") page = <BuyTrip setView={setView} openPolicy={openPolicy} />;
+  else if (view === "buy-text") page = <BuyByDescription setView={setView} openPolicy={openPolicy} />;
   else if (view === "policies") page = <MyPolicies setView={setView} openPolicy={openPolicy} />;
   else if (view === "policy-detail") page = <PolicyDetail policyId={activePolicyId} setView={setView} />;
   else if (view === "transparency") page = <Transparency openPolicy={openPolicy} />;
