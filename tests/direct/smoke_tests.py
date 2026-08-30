@@ -10,6 +10,7 @@ pytest suite once dependencies are installable again.
 import sys
 import types
 import importlib.util
+import json
 
 
 class FakeAddress:
@@ -81,7 +82,7 @@ class _FakeDynArrayType(FakeDynArray):
         return cls
 
 
-def build_contract(fake_exec_prompt=None):
+def build_contract(fake_exec_prompt=None, fake_web_render=None):
     mod = types.ModuleType("genlayer")
     fake_message = FakeMessage()
     fake_evm = FakeEVM()
@@ -97,7 +98,7 @@ def build_contract(fake_exec_prompt=None):
         ContractAt = staticmethod(_contract_at)
 
         class nondet:
-            web = None
+            web = types.SimpleNamespace(render=staticmethod(fake_web_render)) if fake_web_render else None
             exec_prompt = staticmethod(fake_exec_prompt) if fake_exec_prompt else None
 
         class Contract:
@@ -310,3 +311,68 @@ except Exception as e:
     check(f"arrival-before-departure rejected before any LLM call ({e})", "arrival must be after departure" in str(e))
 
 print("\nAll create_policy_from_text smoke checks passed.")
+
+# --- 8. classify_delay_cause: rejected on an unresolved (ACTIVE) policy ----
+c6, msg6 = build_contract()
+msg6.value = 1000
+c6.create_policy("AA", "100", "JFK", 2_000_000_000, 2_000_010_000, 60, 20000, 1500)
+try:
+    c6.classify_delay_cause(1, "https://www.flightaware.com/live/flight/AAL100")
+    check("classify_delay_cause rejected on ACTIVE policy", False)
+except Exception as e:
+    check(f"classify_delay_cause rejected on ACTIVE policy ({e})", "must already have a resolved verdict" in str(e))
+
+# --- 9. classify_delay_cause: rejected for a non-allowlisted domain -------
+c6b, msg6b = build_contract()
+msg6b.value = 1000
+c6b.create_policy("AA", "100", "JFK", 2_000_000_000, 2_000_010_000, 60, 20000, 1500)
+p6b = c6b.policies[c6b.next_policy_id.__class__(1)] if False else c6b.get_policy(1)
+# manually mark resolved (bypasses evaluate_claim's own untested-here web
+# pipeline — that pipeline is verified separately, in Studio)
+stored = c6b.policies[1]
+stored.status = "PAID"
+c6b.policies[1] = stored
+try:
+    c6b.classify_delay_cause(1, "https://not-allowlisted.example.com/status")
+    check("classify_delay_cause rejected for non-allowlisted domain", False)
+except Exception as e:
+    check(f"classify_delay_cause rejected for non-allowlisted domain ({e})", "not allowlisted" in str(e))
+
+# --- 10. classify_delay_cause: successful consensus on a resolved policy --
+def fake_web_render_ok(url, mode=None):
+    return "The airline cited a mechanical issue with the aircraft, delaying departure by 2 hours."
+
+def fake_exec_prompt_airline_fault(prompt, response_format=None):
+    return {"cause": "airline_fault", "explanation": "mechanical issue cited"}
+
+c7, msg7 = build_contract(fake_exec_prompt=fake_exec_prompt_airline_fault, fake_web_render=fake_web_render_ok)
+msg7.value = 1000
+c7.create_policy("AA", "100", "JFK", 2_000_000_000, 2_000_010_000, 60, 20000, 1500)
+stored7 = c7.policies[1]
+stored7.status = "PAID"
+c7.policies[1] = stored7
+
+result_json = c7.classify_delay_cause(1, "https://www.flightaware.com/live/flight/AAL100")
+result = json.loads(result_json)
+check("classify_delay_cause returns airline_fault as classified", result["cause"] == "airline_fault")
+
+p7_after = c7.get_policy(1)
+check("delay_cause_json is persisted on the policy", json.loads(p7_after["delay_cause_json"])["cause"] == "airline_fault")
+check("policy status/premium untouched by classification (informational only)", p7_after["status"] == "PAID" and p7_after["premium"] == 750)
+
+# --- 11. classify_delay_cause: an invalid model response falls back to "unclear" ---
+def fake_exec_prompt_garbage(prompt, response_format=None):
+    return {"cause": "definitely the airline's fault, obviously", "explanation": "x" * 500}
+
+c8, msg8 = build_contract(fake_exec_prompt=fake_exec_prompt_garbage, fake_web_render=fake_web_render_ok)
+msg8.value = 1000
+c8.create_policy("AA", "100", "JFK", 2_000_000_000, 2_000_010_000, 60, 20000, 1500)
+stored8 = c8.policies[1]
+stored8.status = "EXPIRED_NO_PAYOUT"
+c8.policies[1] = stored8
+
+result8 = json.loads(c8.classify_delay_cause(1, "https://www.flightaware.com/live/flight/AAL100"))
+check("an out-of-enum cause value falls back to 'unclear' rather than being stored as-is", result8["cause"] == "unclear")
+check("an overlong explanation is truncated to 200 chars", len(result8["explanation"]) == 200)
+
+print("\nAll classify_delay_cause smoke checks passed.")

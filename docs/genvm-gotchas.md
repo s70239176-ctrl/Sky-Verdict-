@@ -414,3 +414,50 @@ rather than silently guessing.
 Frontend: new `createPolicyFromText` wrapper in `genlayerClient.js`
 (mirrors `create_policy`'s pattern) and a new `BuyByDescription.jsx`
 page, linked from the plain "Protect a flight" form.
+
+## 16. Fault-cause classification — informational only, evaluate_claim untouched
+Added `classify_delay_cause(policy_id, source_url)` — the scoped-down
+version of "subjective claims" (item #3 on the roadmap) agreed on after
+flagging that fault-based *partial payout* would require restructuring
+`evaluate_claim` itself. This version deliberately does neither:
+
+- **evaluate_claim is completely untouched** — same as gotchas #13 and
+  #15's discipline. This is a new, isolated method only.
+- **Zero effect on payout, status, or fund movement.** It only ever
+  writes to a new `delay_cause_json` field — verified explicitly in the
+  smoke tests (`policy status/premium untouched by classification`).
+- Only callable on an already-resolved policy (`PAID` or
+  `EXPIRED_NO_PAYOUT` — i.e. `evaluate_claim` has already run).
+- Single `source_url`, not a list — cause attribution doesn't need
+  `evaluate_claim`'s multi-source median aggregation the way a
+  delay-minutes figure does, so this keeps the new nondet surface small.
+- Same consensus pattern as always (`gl.vm.run_nondet`, leader/validator,
+  exact structural agreement) — reused, not modified.
+- The contract does not trust the model's own classification value
+  blindly: an out-of-enum `cause` value falls back to `"unclear"` rather
+  than being stored as-is, and `explanation` is truncated to 200 chars
+  — same "don't trust the model's self-report" discipline as gotcha #15.
+
+**Frontend gotcha caught before shipping**: the existing
+`runWithRadar`/polling reliability fix (gotcha #9's session, `PolicyDetail.jsx`)
+only checked `status`/`last_verdict_json` for a completion signal.
+`classify_delay_cause` changes neither of those — only
+`delay_cause_json` — so without a fix, a successful classification would
+never have been detected by the poll and would have falsely timed out
+after 2 minutes even though it succeeded quickly. Fixed by extending the
+change-detection to include `delay_cause_json`, generalized as a single
+`hasChanged()` check reused by both the poll and the direct-resolution
+path, rather than duplicating the condition in two places (which is how
+this class of bug slips in).
+
+Verified via `tests/direct/smoke_tests.py`: rejected on an unresolved
+(ACTIVE) policy, rejected for a non-allowlisted domain, a successful
+classification correctly persisted without touching status/premium, and
+an invalid/out-of-enum model response correctly falling back to
+"unclear" rather than being stored as given. 24/24 checks pass across
+all three features now in this file.
+
+**Still needs real deployment verification** — same caveat as every
+prior nondet addition: the offline mock tests the surrounding contract
+logic, not real LLM classification quality or real GenVM consensus
+behavior on this new code path.

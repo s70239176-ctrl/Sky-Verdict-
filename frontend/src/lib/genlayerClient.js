@@ -241,6 +241,19 @@ export async function createTrip(legs, totalPremiumWei) {
 // The LLM only ever extracts parameters into create_policy's own schema —
 // see create_policy_from_text in SkyVerdict.py. departureUtc/arrivalUtc
 // stay as explicit numeric args (not parsed from text) deliberately.
+// Informational-only fault classification for an already-resolved
+// policy (PAID or EXPIRED_NO_PAYOUT). Never affects payout — see
+// classify_delay_cause in SkyVerdict.py.
+export async function classifyDelayCause(policyId, sourceUrl) {
+  requireAddress();
+  const c = requireClient();
+  return c.writeContract({
+    address: CONTRACT_ADDRESS,
+    functionName: "classify_delay_cause",
+    args: [Number(policyId), sourceUrl],
+  });
+}
+
 export async function createPolicyFromText({ description, scheduledDepartureUtc, scheduledArrivalUtc, premiumWei }) {
   requireAddress();
   const c = requireClient();

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { getPolicy, evaluateClaim, appeal, claimRefund } from "../lib/genlayerClient";
+import { getPolicy, evaluateClaim, appeal, claimRefund, classifyDelayCause } from "../lib/genlayerClient";
 import { statusMeta, formatUnixUtc, formatGen } from "../lib/format";
 import VerdictStatus from "../components/VerdictStatus";
 import ValidatorConsensus from "../components/ValidatorConsensus";
@@ -52,7 +52,8 @@ export default function PolicyDetail({ policyId, setView }) {
   const [policy, setPolicy] = useState(null);
   const [error, setError] = useState(null);
   const [sourceUrls, setSourceUrls] = useState(["https://flightaware.com/live/", "https://flightradar24.com/"]);
-  const [pending, setPending] = useState(null); // 'evaluate' | 'appeal' | 'refund' | null
+  const [causeUrl, setCauseUrl] = useState("https://flightaware.com/live/");
+  const [pending, setPending] = useState(null); // 'evaluate' | 'appeal' | 'refund' | 'classify' | null
   const [stage, setStage] = useState(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [timedOut, setTimedOut] = useState(false);
@@ -103,6 +104,7 @@ export default function PolicyDetail({ policyId, setView }) {
     }
     const beforeStatus = policy?.status;
     const beforeVerdict = policy?.last_verdict_json;
+    const beforeCause = policy?.delay_cause_json;
     settledRef.current = false;
     setTimedOut(false);
     setElapsedSec(0);
@@ -123,6 +125,8 @@ export default function PolicyDetail({ policyId, setView }) {
       setElapsedSec((s) => s + 1);
     }, 1000);
 
+    const kindLabel = { evaluate: "Evaluation", appeal: "Appeal", refund: "Refund", classify: "Classification" }[kind] || "Action";
+
     // Independent background poll of the REAL on-chain state. This exists
     // because genlayer-js's write-call promise has, in practice, sometimes
     // hung indefinitely even after the transaction actually finished
@@ -130,6 +134,16 @@ export default function PolicyDetail({ policyId, setView }) {
     // stay stuck on "Awaiting consensus…" forever with no way out, and the
     // only fix would be a manual page refresh. Polling means we notice a
     // real state change even if the write promise itself never resolves.
+    //
+    // classify_delay_cause changes neither status nor last_verdict_json —
+    // only delay_cause_json — so that field needs checking too, or a
+    // successful classification would never be detected and would
+    // falsely time out.
+    const hasChanged = (fresh) =>
+      fresh.status !== beforeStatus ||
+      fresh.last_verdict_json !== beforeVerdict ||
+      fresh.delay_cause_json !== beforeCause;
+
     const startedAt = Date.now();
     pollTimer.current = setInterval(async () => {
       if (settledRef.current) return;
@@ -145,11 +159,8 @@ export default function PolicyDetail({ policyId, setView }) {
       }
       const fresh = await load();
       if (!fresh) return;
-      const changed = fresh.status !== beforeStatus || fresh.last_verdict_json !== beforeVerdict;
-      if (changed) {
-        finishPending(
-          `${kind === "evaluate" ? "Evaluation" : kind === "appeal" ? "Appeal" : "Refund"} confirmed.`
-        );
+      if (hasChanged(fresh)) {
+        finishPending(`${kindLabel} confirmed.`);
       }
     }, POLL_INTERVAL_MS);
 
@@ -158,11 +169,8 @@ export default function PolicyDetail({ policyId, setView }) {
       // The write call itself resolved — great, but only actually finish if
       // the poll above hasn't already caught it (avoids a duplicate toast).
       const fresh = await load();
-      const changed = fresh && (fresh.status !== beforeStatus || fresh.last_verdict_json !== beforeVerdict);
-      if (changed) {
-        finishPending(
-          `${kind === "evaluate" ? "Evaluation" : kind === "appeal" ? "Appeal" : "Refund"} confirmed.`
-        );
+      if (fresh && hasChanged(fresh)) {
+        finishPending(`${kindLabel} confirmed.`);
       }
       // If it resolved but state genuinely hasn't changed yet, keep polling —
       // don't clear pending here; let the poll loop or timeout handle it.
@@ -208,7 +216,14 @@ export default function PolicyDetail({ policyId, setView }) {
   const canEvaluate = policy.status === "ACTIVE";
   const canAppeal = policy.status === "INDETERMINATE" && !policy.appeal_used;
   const canRefund = policy.status === "ACTIVE" || policy.status === "INDETERMINATE";
+  const canClassify = policy.status === "PAID" || policy.status === "EXPIRED_NO_PAYOUT";
   const isPending = pending === "evaluate" || pending === "appeal";
+  let delayCause = null;
+  try {
+    delayCause = policy.delay_cause_json ? JSON.parse(policy.delay_cause_json) : null;
+  } catch {
+    delayCause = null;
+  }
 
   // Same formula the contract itself applies — derived from real fields,
   // never an invented figure. Only meaningful once a payout has actually
@@ -294,6 +309,67 @@ export default function PolicyDetail({ policyId, setView }) {
       {verdict && (
         <div className="mt-8">
           <ReasoningPanel verdict={verdict} thresholdMinutes={policy.threshold_minutes} />
+        </div>
+      )}
+
+      {delayCause && (
+        <div className="mt-8 border rule px-6 py-6">
+          <span className="eyebrow text-ivory-soft/40">Likely cause</span>
+          <p className="mt-3 text-lg font-semibold text-ivory">
+            {delayCause.cause === "airline_fault"
+              ? "Airline-controllable"
+              : delayCause.cause === "weather_or_atc"
+              ? "Weather / air traffic control"
+              : "Unclear from available sources"}
+          </p>
+          {delayCause.explanation && (
+            <p className="mt-1 text-sm text-ivory-soft/50">{delayCause.explanation}</p>
+          )}
+          <p className="mt-4 border-t rule pt-3 text-xs text-ivory-soft/35">
+            Informational only — does not affect the payout amount, which was already finalized
+            when this claim was evaluated.
+          </p>
+        </div>
+      )}
+
+      {canClassify && pending !== "classify" && (
+        <div className="mt-8 border-t rule pt-8">
+          <span className="eyebrow text-ivory-soft/40">
+            {delayCause ? "Re-classify the cause" : "Why did this happen?"}
+          </span>
+          <p className="mt-2 text-sm text-ivory-soft/60">
+            Have a validator read a source page and classify whether this delay looks
+            airline-controllable or weather/ATC-related. Purely informational — this can never
+            change the payout, which is already final.
+          </p>
+          <div className="mt-4 flex gap-2">
+            <input
+              value={causeUrl}
+              onChange={(e) => setCauseUrl(e.target.value)}
+              placeholder="https://flightaware.com/live/…"
+              className="flex-1 border rule bg-near-black px-3 py-2 font-mono text-xs text-ivory outline-none focus:border-orange/60"
+            />
+          </div>
+          <button
+            onClick={() => runWithRadar("classify", () => classifyDelayCause(policyId, causeUrl))}
+            disabled={pending !== null || !causeUrl.trim()}
+            className="mt-4 border rule px-5 py-2.5 font-mono text-xs uppercase tracking-[0.06em] text-ivory hover:border-blue/50 hover:text-blue disabled:opacity-60"
+          >
+            Classify cause
+          </button>
+        </div>
+      )}
+
+      {pending === "classify" && (
+        <div className="mt-8 border border-blue/30 bg-blue/5 px-6 py-6">
+          <ValidatorConsensus stage={stage} />
+          <p className="mt-4 text-sm text-ivory">
+            Validators are independently reading the source and classifying the cause.
+          </p>
+          <p className="mt-1 text-sm text-ivory-soft/50">
+            Informational only — nothing about the payout changes while this runs.
+            <span className="ml-1 font-mono text-ivory-soft/30">({elapsedSec}s elapsed)</span>
+          </p>
         </div>
       )}
 
