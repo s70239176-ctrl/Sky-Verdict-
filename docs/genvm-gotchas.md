@@ -511,3 +511,29 @@ model to agree on the *substance*, and which are free-text description
 that will legitimately vary between independent calls?" — compare only
 the former. Exact-dict equality is only safe when every field is a
 canonical/enumerable value, never when any field is open-ended prose.
+
+## 18. Agent-native purchasing — skill manifest, not speculative protocol integration
+Added `skills/skyverdict-agent/SKILL.md` (a Claude Skills-format manifest
+documenting SkyVerdict's real contract interface for agent discovery)
+and `docs/agent-integration.md` (the human-facing explanation of scope).
+
+This was originally framed as "integrate GenLayer's Internet Court."
+Verified that's a real, recently-launched (July 10, 2026) protocol — but
+confirmed via research that it solves a different problem than
+SkyVerdict has: disputes *between two autonomous AI agents* transacting
+with each other (e.g. OKX's AI agent marketplace), not SkyVerdict's
+actual shape (a human/agent buys parametric insurance; the "dispute" is
+an empirical question about real-world flight data, closer to GenLayer's
+own Intelligent Oracle pattern).
+
+What shipped instead, deliberately scoped to what's actually verifiable:
+a machine-readable skill manifest documenting the contract's real,
+already-working write path (centered on `create_policy_from_text`,
+already the most agent-friendly entrypoint that exists) — zero new
+contract surface, zero redeploy needed, nothing here can regress
+anything. Explicitly does NOT claim ERC-7710 delegation verification,
+x402 payment handling, or MetaMask Smart Accounts integration — those
+are real pieces of the broader Internet Court stack that would need
+testing against live infrastructure only weeks old, which isn't
+something to fake confidence about. See `docs/agent-integration.md` for
+the full reasoning.
