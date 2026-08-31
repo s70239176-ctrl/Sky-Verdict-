@@ -461,3 +461,53 @@ all three features now in this file.
 prior nondet addition: the offline mock tests the surrounding contract
 logic, not real LLM classification quality or real GenVM consensus
 behavior on this new code path.
+
+## 17. Consensus comparison must exclude free-text fields, not just tolerate delay estimates
+Real Studio testing surfaced a genuine bug: `classify_delay_cause`
+resulted in an "undetermined" transaction outcome, and the classified
+result never persisted (`delay_cause_json` stayed `""` even though the
+call reported success). Root cause: `validator_fn` compared the full
+extracted dict for exact equality, including `"explanation"` — open-ended
+LLM prose. Two independent LLM calls reading the same page will almost
+never phrase an explanation identically, even when they agree on the
+actual classification, so validators were very likely agreeing on
+`cause` and still failing consensus purely over wording.
+
+The same bug pattern was found (before it could bite the same way) in
+`create_policy_from_text`'s `validator_fn`, which similarly compared the
+full extracted dict including the free-text `"reason"` field (populated
+whenever extraction fails, explaining what's missing). That path hadn't
+been exercised live yet — the one live test used a description clear
+enough to succeed, where `reason` is always forced to `""` regardless —
+so it hadn't surfaced, but the same failure mode was latent there too.
+
+Fix, applied to both methods: compare only the fields that actually need
+substantive agreement (`cause` for classify_delay_cause;
+`ok`/`airline_code`/`flight_number`/`departure_airport`/
+`threshold_minutes`/`payout_multiplier_bps`/`max_coverage` for
+create_policy_from_text), explicitly excluding free-text explanation
+fields from the equality check. This is the same principle
+`evaluate_claim` already documents in its own docstring ("agree on the
+decision... not exact wording") — it just hadn't been carried over
+consistently to the two nondet methods added after it.
+
+**Why the offline smoke tests never caught this**: the mock
+`fake_exec_prompt` functions returned identical output on every call
+(fixed Python functions with no state), so leader and validator always
+received byte-identical free text too — the exact condition that never
+occurs with real, independent LLM calls. Fixed the test harness itself:
+the relevant fake functions now use a call counter to return genuinely
+different wording on each call, simulating two independent models
+agreeing on substance but not phrasing — which is what actually
+regression-tests this class of bug. Also added an explicit
+genuine-disagreement test (different `cause` values, not just different
+wording) to confirm the fix didn't over-relax consensus on the field
+that actually matters. 26/26 checks pass, including these three new
+ones.
+
+**Lesson for any future nondet method in this contract**: before writing
+a `validator_fn` comparison, explicitly ask "which fields need the
+model to agree on the *substance*, and which are free-text description
+that will legitimately vary between independent calls?" — compare only
+the former. Exact-dict equality is only safe when every field is a
+canonical/enumerable value, never when any field is open-ended prose.

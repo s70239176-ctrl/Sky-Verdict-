@@ -466,12 +466,18 @@ else, no markdown fences, no commentary:
         deployment, not gl.eq_principle's canned helpers, which this
         project has never actually exercised end-to-end. Unlike
         evaluate_claim's tolerant comparison (a few minutes of delay
-        either way is fine), this requires EXACT structural agreement
-        across every extracted field — these are financial terms, not a
-        delay estimate, so "close enough" isn't good enough here. If
-        validators don't agree byte-for-byte, the transaction fails
-        closed (no policy created, premium not charged) rather than
-        accepting fuzzy terms.
+        either way is fine), this requires exact agreement on every
+        MEANINGFUL extracted field — these are financial terms, not a
+        delay estimate, so "close enough" isn't good enough here. The
+        one exception is the free-text "reason" field (populated only
+        when extraction fails, explaining what's missing) — that's
+        excluded from the comparison, since two independent models will
+        rarely phrase an explanation identically even when they
+        correctly agree the description is incomplete (see
+        docs/genvm-gotchas.md gotcha #17). If validators disagree on any
+        of the fields that actually matter, the transaction fails closed
+        (no policy created, premium not charged) rather than accepting
+        fuzzy terms.
         """
         self._require_not_paused()
 
@@ -524,8 +530,22 @@ else, no markdown fences, no commentary:
             except Exception:
                 return False
             my_extracted = _extract()
-            # Exact structural equality required — see docstring above.
-            return my_extracted == leader_extracted
+            # Compare every field EXCEPT "reason" — that's free-text LLM
+            # prose (only ever populated on the failure path, explaining
+            # what's missing), and two independent models will rarely
+            # phrase it identically even when they correctly agree the
+            # description is incomplete. Requiring exact equality on it
+            # meant a genuinely ambiguous description could make
+            # consensus fail with a confusing "undetermined" outcome
+            # instead of cleanly rejecting with the intended validation
+            # error (see docs/genvm-gotchas.md gotcha #17 — the same bug
+            # was first caught in classify_delay_cause's "explanation"
+            # field and fixed here too once found).
+            meaningful_fields = (
+                "ok", "airline_code", "flight_number", "departure_airport",
+                "threshold_minutes", "payout_multiplier_bps", "max_coverage",
+            )
+            return all(my_extracted[k] == leader_extracted.get(k) for k in meaningful_fields)
 
         extracted_json = gl.vm.run_nondet(leader_fn, validator_fn)
         extracted = json.loads(extracted_json)
@@ -607,10 +627,15 @@ does not state or clearly imply a cause.
         delay-minutes figure does, since one authoritative page
         explaining "why" is generally sufficient for an informational
         field. Same consensus pattern as everywhere else in this
-        contract (gl.vm.run_nondet, leader/validator, exact structural
-        agreement required) — if validators disagree, the call simply
-        fails with no side effects, since no funds were ever part of
-        this transaction to begin with.
+        contract (gl.vm.run_nondet, leader/validator). Validators must
+        agree on the "cause" classification itself, but NOT on the
+        free-text "explanation" describing it — two independent models
+        will rarely phrase that identically even when they agree on the
+        cause, and requiring exact agreement there caused real
+        consensus failures during testing (see docs/genvm-gotchas.md
+        gotcha #17). If validators disagree on the actual cause, the
+        call simply fails with no side effects, since no funds were
+        ever part of this transaction to begin with.
         """
         self._require_not_paused()
 
@@ -656,7 +681,17 @@ does not state or clearly imply a cause.
                 leader_classified = json.loads(gl.vm.unpack_result(leader_result))
             except Exception:
                 return False
-            return _classify() == leader_classified
+            # Agree on the CAUSE only, not the free-text explanation —
+            # "explanation" is open-ended LLM prose, and two independent
+            # models reading the same page will almost never phrase it
+            # identically. Requiring exact-dict equality here (an earlier
+            # version of this method did) meant validators could agree
+            # on the actual classification and still fail consensus
+            # purely over wording — the same "agree on substance, not
+            # exact text" principle evaluate_claim already applies to
+            # delay estimates, just not consistently carried over here
+            # until this fix (see docs/genvm-gotchas.md gotcha #17).
+            return _classify()["cause"] == leader_classified.get("cause")
 
         classified_json = gl.vm.run_nondet(leader_fn, validator_fn)
         policy.delay_cause_json = classified_json

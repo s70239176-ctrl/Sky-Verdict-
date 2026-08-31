@@ -273,6 +273,7 @@ check("explicitly stated max_coverage is honored, not overridden", p3["max_cover
 
 # --- 6. create_policy_from_text: incomplete extraction fails closed --------
 def fake_exec_prompt_incomplete(prompt, response_format=None):
+    call_count = fake_exec_prompt_incomplete.calls = getattr(fake_exec_prompt_incomplete, "calls", 0) + 1
     return {
         "ok": True,  # model claims success, but required fields are missing —
         "airline_code": "",  # this tests the contract's OWN re-validation,
@@ -281,7 +282,12 @@ def fake_exec_prompt_incomplete(prompt, response_format=None):
         "threshold_minutes": 0,
         "payout_multiplier_bps": 0,
         "max_coverage": 0,
-        "reason": "",
+        # Deliberately DIFFERENT free text on each call (leader vs
+        # validator) — simulates two independent LLM calls phrasing the
+        # same conclusion differently. This is the regression test for
+        # gotcha #17: the fix must tolerate this and still agree on the
+        # meaningful fields, rather than failing consensus over wording.
+        "reason": f"missing required flight details (call #{call_count})",
     }
 
 c4, msg4 = build_contract(fake_exec_prompt=fake_exec_prompt_incomplete)
@@ -343,7 +349,16 @@ def fake_web_render_ok(url, mode=None):
     return "The airline cited a mechanical issue with the aircraft, delaying departure by 2 hours."
 
 def fake_exec_prompt_airline_fault(prompt, response_format=None):
-    return {"cause": "airline_fault", "explanation": "mechanical issue cited"}
+    # Deliberately varying free text on each call — see gotcha #17.
+    # This is the actual bug that shipped: an earlier version of this
+    # test used identical text on every call (since it's a fixed
+    # function), which meant the offline mock could never have caught
+    # the exact-dict-comparison bug in the first place. A call counter
+    # simulates two genuinely independent LLM calls agreeing on
+    # substance but differing in wording — exactly what real leader and
+    # validator calls do.
+    n = fake_exec_prompt_airline_fault.calls = getattr(fake_exec_prompt_airline_fault, "calls", 0) + 1
+    return {"cause": "airline_fault", "explanation": f"mechanical issue cited (phrasing #{n})"}
 
 c7, msg7 = build_contract(fake_exec_prompt=fake_exec_prompt_airline_fault, fake_web_render=fake_web_render_ok)
 msg7.value = 1000
@@ -376,3 +391,28 @@ check("an out-of-enum cause value falls back to 'unclear' rather than being stor
 check("an overlong explanation is truncated to 200 chars", len(result8["explanation"]) == 200)
 
 print("\nAll classify_delay_cause smoke checks passed.")
+
+# --- 12. classify_delay_cause: GENUINE disagreement on cause still fails --
+def fake_exec_prompt_flip_flop(prompt, response_format=None):
+    # Leader and validator genuinely disagree on the substantive
+    # classification itself (not just wording) — consensus must still
+    # correctly fail in this case. Proves the gotcha #17 fix loosened
+    # comparison on free text specifically, without accidentally
+    # loosening it on the field that actually matters.
+    n = fake_exec_prompt_flip_flop.calls = getattr(fake_exec_prompt_flip_flop, "calls", 0) + 1
+    cause = "airline_fault" if n == 1 else "weather_or_atc"
+    return {"cause": cause, "explanation": "some explanation"}
+
+c9, msg9 = build_contract(fake_exec_prompt=fake_exec_prompt_flip_flop, fake_web_render=fake_web_render_ok)
+msg9.value = 1000
+c9.create_policy("AA", "100", "JFK", 2_000_000_000, 2_000_010_000, 60, 20000, 1500)
+stored9 = c9.policies[1]
+stored9.status = "PAID"
+c9.policies[1] = stored9
+try:
+    c9.classify_delay_cause(1, "https://www.flightaware.com/live/flight/AAL100")
+    check("genuine cause disagreement correctly fails consensus", False)
+except Exception as e:
+    check(f"genuine cause disagreement correctly fails consensus ({e})", "disagreed" in str(e).lower())
+
+print("\nAll consensus-comparison regression checks passed.")
