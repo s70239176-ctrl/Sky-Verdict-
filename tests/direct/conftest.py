@@ -229,9 +229,15 @@ def fake_gl_env(monkeypatch):
     # Force a fresh import of the contract module bound to the fake SDK
     sys.modules.pop("SkyVerdict", None)
     import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "SkyVerdict", "/home/claude/skyverdict/contracts/SkyVerdict.py"
+    import pathlib
+    # Resolve relative to this conftest's location rather than a hardcoded
+    # absolute path — the previous hardcoded path only worked on the one
+    # machine it was written on and silently broke this whole fixture
+    # (and therefore every test using it) anywhere else.
+    _contract_path = (
+        pathlib.Path(__file__).resolve().parents[2] / "contracts" / "SkyVerdict.py"
     )
+    spec = importlib.util.spec_from_file_location("SkyVerdict", str(_contract_path))
     contract_mod = importlib.util.module_from_spec(spec)
     sys.modules["SkyVerdict"] = contract_mod
     spec.loader.exec_module(contract_mod)

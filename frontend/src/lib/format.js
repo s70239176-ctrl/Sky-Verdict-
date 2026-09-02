@@ -41,8 +41,16 @@ export function minutesToHuman(min) {
 export const STATUS_META = {
   ACTIVE: { label: "Monitoring", color: "text-orange", dot: "bg-orange", verb: "MONITORING" },
   PAID: { label: "Settled — paid", color: "text-green", dot: "bg-green", verb: "DELAY VERIFIED" },
+  // Verdict resolved PAYOUT, but the shared pool didn't have enough
+  // liquidity to cover the full entitled amount at settlement time — the
+  // holder received a real transfer, just less than they were entitled to.
+  // Kept visually distinct from plain PAID so this is never mistaken for a
+  // full settlement.
+  PAID_PARTIAL: { label: "Settled — partial payout", color: "text-amber", dot: "bg-amber", verb: "PARTIAL PAYOUT" },
   EXPIRED_NO_PAYOUT: { label: "Verified — no payout", color: "text-green", dot: "bg-green", verb: "ON TIME" },
   REFUNDED: { label: "Refunded", color: "text-ivory-soft/70", dot: "bg-ivory-soft/40", verb: "REFUNDED" },
+  // Same shortfall concept as PAID_PARTIAL, on the claim_refund path.
+  REFUNDED_PARTIAL: { label: "Refunded — partial", color: "text-amber", dot: "bg-amber", verb: "PARTIAL REFUND" },
   INDETERMINATE: { label: "Awaiting appeal", color: "text-amber", dot: "bg-amber", verb: "NO QUORUM" },
 };
 

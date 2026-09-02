@@ -142,9 +142,14 @@ def build_contract(fake_exec_prompt=None, fake_web_render=None):
 
     sys.modules["genlayer"] = mod
     sys.modules.pop("SkyVerdict", None)
-    spec = importlib.util.spec_from_file_location(
-        "SkyVerdict", "/home/claude/skyverdict/contracts/SkyVerdict.py"
+    import pathlib
+    # Resolve relative to this file's location, not a hardcoded absolute
+    # path from one specific machine (that path silently broke this whole
+    # script anywhere else it was run).
+    _contract_path = (
+        pathlib.Path(__file__).resolve().parents[2] / "contracts" / "SkyVerdict.py"
     )
+    spec = importlib.util.spec_from_file_location("SkyVerdict", str(_contract_path))
     contract_mod = importlib.util.module_from_spec(spec)
     sys.modules["SkyVerdict"] = contract_mod
     spec.loader.exec_module(contract_mod)

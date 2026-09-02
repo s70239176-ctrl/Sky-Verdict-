@@ -36,7 +36,7 @@ closed (`NO_QUORUM`) rather than guessing.
 | Network | GenLayer Studio (hosted) — `studionet` |
 | RPC | `https://studio.genlayer.com/api` |
 | Chain ID | Confirm current value in Studio's own network settings before deploying/connecting — GenLayer's docs show `61999` for Studio-class networks, but hosted Studio's exact backing config is operated independently of this repo and can change |
-| Contract address | `0x9d321C1AB2379480c0BaFaB521C072a84C621a23` |
+| Contract address | `0x005805a09aE697652eD0D8577e7769e3eDcE5585` |
 | Explorer | [explorer-studio.genlayer.com](https://explorer-studio.genlayer.com/) |
 
 This is a **Studio-stage deployment for active testing**, not a Testnet

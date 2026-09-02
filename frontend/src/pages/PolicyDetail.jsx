@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { getPolicy, evaluateClaim, appeal, claimRefund, classifyDelayCause } from "../lib/genlayerClient";
 import { statusMeta, formatUnixUtc, formatGen } from "../lib/format";
+import { validateSourceUrls } from "../lib/sourceValidation";
 import VerdictStatus from "../components/VerdictStatus";
 import ValidatorConsensus from "../components/ValidatorConsensus";
 import EvidenceTimeline from "../components/EvidenceTimeline";
@@ -216,7 +217,14 @@ export default function PolicyDetail({ policyId, setView }) {
   const canEvaluate = policy.status === "ACTIVE";
   const canAppeal = policy.status === "INDETERMINATE" && !policy.appeal_used;
   const canRefund = policy.status === "ACTIVE" || policy.status === "INDETERMINATE";
-  const canClassify = policy.status === "PAID" || policy.status === "EXPIRED_NO_PAYOUT";
+  // PAID_PARTIAL is still a fully resolved verdict (just an underfunded
+  // one) — classify_delay_cause's own eligibility check accepts it
+  // alongside PAID/EXPIRED_NO_PAYOUT, so the UI must too.
+  const canClassify =
+    policy.status === "PAID" ||
+    policy.status === "PAID_PARTIAL" ||
+    policy.status === "EXPIRED_NO_PAYOUT";
+  const isSettled = policy.status === "PAID" || policy.status === "PAID_PARTIAL";
   const isPending = pending === "evaluate" || pending === "appeal";
   let delayCause = null;
   try {
@@ -225,10 +233,15 @@ export default function PolicyDetail({ policyId, setView }) {
     delayCause = null;
   }
 
-  // Same formula the contract itself applies — derived from real fields,
-  // never an invented figure. Only meaningful once a payout has actually
-  // been decided (status PAID).
-  const settlementAmount = Math.min(
+  // The contract's own recorded ground truth of what actually moved —
+  // NOT re-derived here from premium * multiplier / max_coverage. That
+  // theoretical figure is only what the holder was *entitled* to; if the
+  // shared pool lacked enough liquidity at settlement time the contract
+  // pays out less and marks the policy PAID_PARTIAL, and showing the
+  // theoretical number in that case would misrepresent what was actually
+  // sent. payout_amount_wei is the number that must be shown as "Settled".
+  const settlementAmount = policy.payout_amount_wei;
+  const entitledAmount = Math.min(
     (Number(policy.premium) * Number(policy.payout_multiplier_bps)) / 10000,
     Number(policy.max_coverage)
   );
@@ -296,9 +309,13 @@ export default function PolicyDetail({ policyId, setView }) {
         </div>
       </div>
 
-      {policy.status === "PAID" && (
+      {isSettled && (
         <div className="mt-8">
-          <SettlementStatus amountWei={settlementAmount} />
+          <SettlementStatus
+            amountWei={settlementAmount}
+            isPartial={policy.status === "PAID_PARTIAL"}
+            entitledWei={policy.status === "PAID_PARTIAL" ? entitledAmount : null}
+          />
         </div>
       )}
 
@@ -412,19 +429,33 @@ export default function PolicyDetail({ policyId, setView }) {
           <div className="mt-4">
             <SourceUrlList urls={sourceUrls} setUrls={setSourceUrls} />
           </div>
-          <button
-            onClick={() =>
-              runWithRadar(canEvaluate ? "evaluate" : "appeal", () =>
-                canEvaluate
-                  ? evaluateClaim(policyId, sourceUrls.filter(Boolean))
-                  : appeal(policyId, sourceUrls.filter(Boolean))
-              )
-            }
-            disabled={pending !== null || sourceUrls.filter(Boolean).length < 1}
-            className="mt-4 bg-orange px-5 py-2.5 font-mono text-xs uppercase tracking-[0.06em] font-semibold text-ink hover:bg-orange/90 disabled:opacity-60"
-          >
-            {isPending ? "Awaiting consensus…" : canEvaluate ? "Evaluate now" : "Submit appeal"}
-          </button>
+          {(() => {
+            const filled = sourceUrls.filter(Boolean);
+            const { ok, error: sourceError } = validateSourceUrls(filled);
+            const belowMin = filled.length < 2; // mirrors MIN_SOURCES_REQUIRED
+            const disabled = pending !== null || belowMin || !ok;
+            return (
+              <>
+                {filled.length > 0 && !ok && (
+                  <p className="mt-2 text-xs text-amber">{sourceError}</p>
+                )}
+                {filled.length > 0 && ok && belowMin && (
+                  <p className="mt-2 text-xs text-amber">At least 2 independent sources are required.</p>
+                )}
+                <button
+                  onClick={() =>
+                    runWithRadar(canEvaluate ? "evaluate" : "appeal", () =>
+                      canEvaluate ? evaluateClaim(policyId, filled) : appeal(policyId, filled)
+                    )
+                  }
+                  disabled={disabled}
+                  className="mt-4 bg-orange px-5 py-2.5 font-mono text-xs uppercase tracking-[0.06em] font-semibold text-ink hover:bg-orange/90 disabled:opacity-60"
+                >
+                  {isPending ? "Awaiting consensus…" : canEvaluate ? "Evaluate now" : "Submit appeal"}
+                </button>
+              </>
+            );
+          })()}
         </div>
       )}
 

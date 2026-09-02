@@ -28,6 +28,7 @@ only ever invoked through gl.vm.run_nondet(...) or gl.eq_principle.*.
 
 from genlayer import *
 from dataclasses import dataclass
+from urllib.parse import urlparse
 import json
 import typing
 
@@ -60,8 +61,17 @@ BPS_DENOMINATOR: int = 10_000
 
 POLICY_STATUS_ACTIVE: str = "ACTIVE"
 POLICY_STATUS_PAID: str = "PAID"
+# Pool balance was insufficient to cover the full entitled payout at
+# settlement time. The policy IS resolved (verdict stands, not
+# re-evaluable) but payout_amount_wei will be less than the amount
+# `_derive_verdict` + the multiplier/cap math actually entitled the
+# holder to. Kept distinct from PAID so no UI or downstream check can
+# silently read "PAID" and assume the holder was made whole.
+POLICY_STATUS_PAID_PARTIAL: str = "PAID_PARTIAL"
 POLICY_STATUS_EXPIRED_NO_PAYOUT: str = "EXPIRED_NO_PAYOUT"
 POLICY_STATUS_REFUNDED: str = "REFUNDED"
+# Same shortfall concept as PAID_PARTIAL, for the claim_refund path.
+POLICY_STATUS_REFUNDED_PARTIAL: str = "REFUNDED_PARTIAL"
 POLICY_STATUS_INDETERMINATE: str = "INDETERMINATE"  # awaiting appeal
 
 
@@ -89,6 +99,16 @@ class Policy:
     appeal_used: bool
     trip_id: u256              # 0 == standalone policy; >0 groups legs of one trip
     delay_cause_json: str      # informational fault classification — never affects payout
+    # GEN wei actually transferred to the holder — via evaluate_claim's
+    # payout OR claim_refund's refund (a policy only ever settles
+    # through exactly one of those two paths, so one field covers
+    # both). This is the ground truth of what moved; it can be less
+    # than the "entitled" amount computed from premium/multiplier/cap
+    # if the pool_balance was insufficient at settlement time — see
+    # POLICY_STATUS_PAID_PARTIAL / POLICY_STATUS_REFUNDED_PARTIAL.
+    # Stays 0 for policies that never reach a money-moving outcome
+    # (NO_PAYOUT, INDETERMINATE, ACTIVE).
+    payout_amount_wei: u256
 
 
 @allow_storage
@@ -159,14 +179,60 @@ class SkyVerdict(gl.Contract):
         if self.paused:
             raise Exception("SkyVerdict: contract is paused")
 
-    def _require_domain_allowed(self, url: str) -> None:
-        allowed = False
+    def _canonical_host(self, url: str) -> str:
+        """
+        Parse a URL down to a normalized, comparable hostname. Used both
+        for allowlist checks and for source-independence checks, so the
+        two can never disagree about what a URL's "identity" is.
+
+        - Requires an actual http(s) scheme (blocks file://, data://,
+          javascript:, and schemeless strings that urlparse would
+          otherwise mis-parse as a relative path).
+        - Uses urlparse(...).hostname specifically (not the raw string),
+          which strips userinfo (user@host tricks), port numbers, and
+          is already lowercased by the stdlib.
+        - Strips a leading "www." so www.flightaware.com and
+          flightaware.com are recognized as the same host.
+        """
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            raise Exception(f"SkyVerdict: could not parse url {url}")
+
+        if parsed.scheme not in ("http", "https"):
+            raise Exception(f"SkyVerdict: unsupported url scheme for {url}")
+
+        host = parsed.hostname or ""
+        if not host:
+            raise Exception(f"SkyVerdict: url has no host: {url}")
+
+        if host.startswith("www."):
+            host = host[4:]
+
+        return host
+
+    def _require_domain_allowed(self, url: str) -> str:
+        """
+        Returns the canonical host on success (callers use this to also
+        de-duplicate sources) or raises if the host isn't allowlisted.
+
+        Match is exact-or-subdomain-of an allowlisted entry, on the
+        parsed hostname only — NOT a substring check on the raw URL.
+        The old `if domain in url` check could be defeated by e.g.
+        https://evil.com/?x=flightaware.com,
+        https://flightaware.com.evil.com/, or a lookalike host
+        containing an allowlisted domain as a path/query fragment.
+        """
+        host = self._canonical_host(url)
+
         for domain in self.allowlisted_domains.keys():
-            if domain in url:
-                allowed = True
-                break
-        if not allowed:
-            raise Exception(f"SkyVerdict: domain not allowlisted for url {url}")
+            d = domain.lower()
+            if d.startswith("www."):
+                d = d[4:]
+            if host == d or host.endswith("." + d):
+                return host
+
+        raise Exception(f"SkyVerdict: domain not allowlisted for url {url}")
 
     def _fence(self, raw_text: str, max_chars: int = 6000) -> str:
         """
@@ -306,6 +372,7 @@ fences, no commentary:
             appeal_used=False,
             trip_id=trip_id,
             delay_cause_json="",
+            payout_amount_wei=u256(0),
         )
         self.policies[policy_id] = policy
         return policy_id
@@ -643,7 +710,11 @@ does not state or clearly imply a cause.
         policy = self.policies.get(pid, None)
         if policy is None:
             raise Exception("SkyVerdict: unknown policy_id")
-        if policy.status != POLICY_STATUS_PAID and policy.status != POLICY_STATUS_EXPIRED_NO_PAYOUT:
+        if policy.status not in (
+            POLICY_STATUS_PAID,
+            POLICY_STATUS_PAID_PARTIAL,
+            POLICY_STATUS_EXPIRED_NO_PAYOUT,
+        ):
             raise Exception(
                 f"SkyVerdict: policy must already have a resolved verdict (status={policy.status})"
             )
@@ -740,8 +811,24 @@ does not state or clearly imply a cause.
             raise Exception(
                 f"SkyVerdict: need at least {MIN_SOURCES_REQUIRED} source_urls"
             )
+
+        # Validate every URL AND collect its canonical host in the same
+        # pass, so "allowlisted" and "counted as independent" can never
+        # disagree about a URL's identity. Reject outright if two
+        # sources resolve to the same host (e.g. flightaware.com and
+        # www.flightaware.com, or the exact same URL twice) — quorum
+        # requires MIN_SOURCES_REQUIRED *independent* providers, not the
+        # same provider read twice, which would let a single source
+        # count as two votes toward consensus.
+        seen_hosts: set = set()
         for url in source_urls:
-            self._require_domain_allowed(url)
+            host = self._require_domain_allowed(url)
+            if host in seen_hosts:
+                raise Exception(
+                    f"SkyVerdict: source_urls must be from distinct providers "
+                    f"— '{host}' appears more than once"
+                )
+            seen_hosts.add(host)
 
         airline_code = policy.airline_code
         flight_number = policy.flight_number
@@ -853,15 +940,28 @@ does not state or clearly imply a cause.
             return verdict_json
 
         if verdict["decision"] == "PAYOUT":
-            payout_amount = min(
+            entitled_amount = min(
                 int(policy.premium) * int(policy.payout_multiplier_bps) // BPS_DENOMINATOR,
                 int(policy.max_coverage),
             )
-            payout_amount = min(payout_amount, int(self.pool_balance))
-            self.pool_balance = u256(int(self.pool_balance) - payout_amount)
-            policy.status = POLICY_STATUS_PAID
+            # This min() against pool_balance is a genuine liquidity
+            # shortfall path, not a rounding edge case — a pooled
+            # product can, by design, be asked to pay out more than it
+            # currently holds if several policies resolve PAYOUT before
+            # enough premium has backfilled the pool. What must never
+            # happen is silently transferring less than entitled_amount
+            # while still recording the policy as fully "PAID" with no
+            # trace of the shortfall.
+            actual_payout = min(entitled_amount, int(self.pool_balance))
+            self.pool_balance = u256(int(self.pool_balance) - actual_payout)
+            policy.payout_amount_wei = u256(actual_payout)
+            policy.status = (
+                POLICY_STATUS_PAID if actual_payout >= entitled_amount
+                else POLICY_STATUS_PAID_PARTIAL
+            )
             self.policies[pid] = policy
-            gl.ContractAt(policy.holder).emit_transfer(value=u256(payout_amount))
+            if actual_payout > 0:
+                gl.ContractAt(policy.holder).emit_transfer(value=u256(actual_payout))
             return verdict_json
 
         # decision == "NO_PAYOUT": flight was on-time / under threshold.
@@ -954,12 +1054,17 @@ does not state or clearly imply a cause.
         if now is not None and now <= int(policy.scheduled_arrival_utc) + CLAIM_EXPIRY_SECONDS:
             raise Exception("SkyVerdict: claim window has not expired yet")
 
-        refund_amount = int(policy.premium)
-        refund_amount = min(refund_amount, int(self.pool_balance))
-        self.pool_balance = u256(int(self.pool_balance) - refund_amount)
-        policy.status = POLICY_STATUS_REFUNDED
+        entitled_refund = int(policy.premium)
+        actual_refund = min(entitled_refund, int(self.pool_balance))
+        self.pool_balance = u256(int(self.pool_balance) - actual_refund)
+        policy.payout_amount_wei = u256(actual_refund)
+        policy.status = (
+            POLICY_STATUS_REFUNDED if actual_refund >= entitled_refund
+            else POLICY_STATUS_REFUNDED_PARTIAL
+        )
         self.policies[pid] = policy
-        gl.ContractAt(policy.holder).emit_transfer(value=u256(refund_amount))
+        if actual_refund > 0:
+            gl.ContractAt(policy.holder).emit_transfer(value=u256(actual_refund))
 
     # -----------------------------------------------------------------
     # Admin
@@ -1024,6 +1129,7 @@ does not state or clearly imply a cause.
             "appeal_used": policy.appeal_used,
             "trip_id": int(policy.trip_id),
             "delay_cause_json": policy.delay_cause_json,
+            "payout_amount_wei": int(policy.payout_amount_wei),
         }
 
     @gl.public.view

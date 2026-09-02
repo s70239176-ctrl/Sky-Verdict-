@@ -537,3 +537,82 @@ are real pieces of the broader Internet Court stack that would need
 testing against live infrastructure only weeks old, which isn't
 something to fake confidence about. See `docs/agent-integration.md` for
 the full reasoning.
+
+## 19. Hostname substring allowlist, source-independence, and silent partial-payout mislabeling
+A review pass on the deployed contract surfaced three related integrity
+gaps, all in code that had shipped and "worked" in every prior manual
+test because nobody had tried to break it on purpose.
+
+**Hostname allowlist was a substring check, not a hostname check.**
+`_require_domain_allowed` used `if domain in url`, which matches
+anywhere in the raw URL string — not just the actual host. All of the
+following defeated it: `https://evil.com/?x=flightaware.com` (allowlisted
+domain smuggled into a query string), `https://flightaware.com.evil.com/`
+(allowlisted domain as a prefix of an attacker-controlled host),
+`https://evil.com/flightaware.com/status` (allowlisted domain as a path
+segment), and `https://flightaware.com@evil.com/` (userinfo trick).
+Fixed by parsing with `urllib.parse.urlparse(url).hostname` and matching
+the *parsed hostname* exact-or-subdomain against a normalized (lowercased,
+`www.`-stripped) allowlist entry, restricted to `http`/`https` schemes
+only. `_canonical_host` is now the single source of truth both the
+allowlist check and the independence check (below) call into, so the two
+can never disagree about a URL's identity.
+
+**No check that source_urls were actually independent.** `evaluate_claim`
+required `MIN_SOURCES_REQUIRED` (2) source URLs but never checked they
+resolved to different providers — `flightaware.com` and
+`www.flightaware.com` (or the literal same URL twice) would pass as "2
+sources," letting a single provider's read count as two votes toward
+quorum. Fixed by collecting each URL's canonical host in the same pass
+that validates the allowlist, and rejecting the call outright if any two
+resolve to the same host.
+
+**Partial payouts/refunds were silently recorded as full ones.** Both
+`evaluate_claim`'s PAYOUT branch and `claim_refund` computed an entitled
+amount, capped it at whatever `pool_balance` actually had available
+(`min(entitled, pool_balance)`), transferred that lesser amount — and
+then unconditionally set status to `PAID`/`REFUNDED` regardless of
+whether the transfer actually covered the full entitlement. A pooled
+product can legitimately be asked to pay out more than it currently
+holds (several policies resolving PAYOUT before enough premium has
+backfilled the pool is normal, not a bug), so the `min()` against
+`pool_balance` itself is correct and stays. What was wrong is that the
+shortfall left no trace: a holder shorted on their payout saw the exact
+same `"PAID"` status as one made fully whole, with no field anywhere
+recording what actually moved. Fixed by adding a `payout_amount_wei`
+field to `Policy` (shared by both the payout and refund paths, since a
+policy only ever settles through one of them) and two new statuses,
+`PAID_PARTIAL` / `REFUNDED_PARTIAL`, used whenever the actual transfer
+came in under the entitled amount. `classify_delay_cause`'s eligibility
+check was updated to accept `PAID_PARTIAL` alongside `PAID` /
+`EXPIRED_NO_PAYOUT` — a partial payout is still a fully resolved verdict,
+just an underfunded one. The frontend was updated to match: it now
+displays `payout_amount_wei` (the contract's recorded ground truth)
+instead of re-deriving the theoretical entitled amount from
+`premium * multiplier / max_coverage`, which is exactly the same class
+of bug the contract had — showing a number the holder was never actually
+sent.
+
+**Test-suite fallout, and a bug in the tests themselves.** Two existing
+tests (`test_payout_path_transfers_funds_and_marks_paid` and
+`test_appeal_from_indeterminate_can_resolve`) had been asserting
+`status == "PAID"` for scenarios that, on inspection, were genuine
+liquidity shortfalls (theoretical entitlement of 2250 against a pool
+that only ever held 750) — i.e. the tests had baked in the accounting
+bug as expected behavior. Both were corrected to assert `PAID_PARTIAL`
+and check `payout_amount_wei` explicitly. Also discovered, independently
+of this review, that `conftest.py` and `smoke_tests.py` both imported
+the contract from a hardcoded absolute path
+(`/home/claude/skyverdict/contracts/SkyVerdict.py`) — silently correct
+on the one machine that path happened to exist on, and silently broken
+(every test in both files unable to even import the contract) anywhere
+else. Fixed by resolving the contract path relative to each test file's
+own location via `pathlib.Path(__file__).resolve()`.
+
+**Lesson for this contract generally**: every place `min(entitled,
+available_liquidity)` appears is a place where "the transfer succeeded"
+and "the holder was made whole" are two different facts, and only one of
+them was being recorded. Any future settlement path that touches
+`pool_balance` should ask the same question this fix asks: what field
+proves what actually moved, independent of what was owed?
+
