@@ -616,3 +616,15 @@ them was being recorded. Any future settlement path that touches
 `pool_balance` should ask the same question this fix asks: what field
 proves what actually moved, independent of what was owed?
 
+
+**Follow-up, applied after review**: `_canonical_host` originally
+accepted both `http` and `https` schemes
+(`if parsed.scheme not in ("http", "https")`). The original reviewer
+feedback specifically asked to "validate canonical **HTTPS**
+hostnames" — not http(s) generally — and plain http is spoofable via a
+basic on-path attacker in a way https isn't. Tightened to
+`if parsed.scheme != "https"`, mirrored in the frontend's
+`sourceValidation.js` (`parsed.protocol !== "https:"`), and the smoke
+test that had been explicitly flagging this gap was flipped to assert
+the fix instead of documenting the gap. All 26 offline checks still
+pass.

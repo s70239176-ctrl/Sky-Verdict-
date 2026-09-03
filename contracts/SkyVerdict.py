@@ -199,8 +199,13 @@ class SkyVerdict(gl.Contract):
         except Exception:
             raise Exception(f"SkyVerdict: could not parse url {url}")
 
-        if parsed.scheme not in ("http", "https"):
-            raise Exception(f"SkyVerdict: unsupported url scheme for {url}")
+        if parsed.scheme != "https":
+            # Reviewer feedback explicitly asked for HTTPS specifically,
+            # not "http(s) generally" — plain http is spoofable via a
+            # basic on-path attacker in a way https isn't, and this
+            # check gates which content GenLayer validators are willing
+            # to treat as authoritative. See docs/genvm-gotchas.md.
+            raise Exception(f"SkyVerdict: source URL must use https:// ({url})")
 
         host = parsed.hostname or ""
         if not host:

@@ -421,3 +421,155 @@ except Exception as e:
     check(f"genuine cause disagreement correctly fails consensus ({e})", "disagreed" in str(e).lower())
 
 print("\nAll consensus-comparison regression checks passed.")
+
+# --- 13. Lookalike-hostname bypass attempts — most must be rejected -------
+# Ported from a parallel fix session against this same reviewer feedback
+# (see the diff between that session's hand-rolled parser and this
+# uploaded version's urlparse-based _canonical_host). Adapted to this
+# contract's actual current behavior below — flagged explicitly where
+# that behavior is a real, worth-a-decision gap, not silently patched
+# over.
+c10, msg10 = build_contract()
+BAD_URLS = [
+    ("https://notflightaware.com/x", "substring without a real subdomain boundary"),
+    ("https://flightaware.com.evil.com/x", "lookalike subdomain suffix"),
+    ("https://evil.com/?redirect=flightaware.com", "allowlisted text in a query param"),
+    ("https://flightaware.com@evil.com/x", "userinfo host-spoofing trick"),
+    ("ftp://flightaware.com/x", "non-https scheme (ftp)"),
+]
+for bad_url, why in BAD_URLS:
+    try:
+        c10._require_domain_allowed(bad_url)
+        check(f"rejected: {why} ({bad_url})", False)
+    except Exception as e:
+        check(f"rejected: {why}", True)
+
+# Previously flagged and now fixed: plain http:// must be rejected,
+# matching the reviewer's explicit "validate canonical HTTPS hostnames"
+# — not "http(s) generally." See docs/genvm-gotchas.md.
+try:
+    c10._require_domain_allowed("http://flightaware.com/x")
+    check("plain http:// is correctly rejected (HTTPS required, as originally requested)", False)
+except Exception as e:
+    check(f"plain http:// is correctly rejected ({e})", "https://" in str(e))
+
+# Positive controls — legitimate URLs must still pass, and www./bare
+# forms of an allowlisted domain must be recognized as the SAME host
+# (this contract normalizes www. away inside _canonical_host itself,
+# not just at the independence-check layer).
+GOOD_URLS = [
+    "https://flightaware.com/x",
+    "https://www.flightaware.com/x",
+    "https://WWW.FLIGHTAWARE.COM/x",
+]
+for good_url in GOOD_URLS:
+    try:
+        host = c10._require_domain_allowed(good_url)
+        check(f"accepted legitimate URL ({good_url}) -> host={host}", host == "flightaware.com")
+    except Exception as e:
+        check(f"accepted legitimate URL ({good_url})", False)
+
+print("\nAll lookalike-hostname checks passed.")
+
+# --- 14. Duplicate / non-independent sources rejected in evaluate_claim ---
+def fake_web_render_delay(url, mode=None):
+    return "Departure delayed 150 minutes, no reason given."
+
+def fake_exec_prompt_delay_150(prompt, response_format=None):
+    return {"ok": True, "delay_minutes": 150, "cancelled": False, "confidence": 90}
+
+SETTLEMENT_BUFFER_SECONDS = 3 * 60 * 60
+CLAIM_EXPIRY_SECONDS = 14 * 24 * 60 * 60
+
+def buy_evaluable_policy(c, msg, premium, multiplier_bps, max_coverage, threshold_minutes=60):
+    now = msg.timestamp
+    dep, arr = now + 100, now + 200
+    msg.value = premium
+    pid = c.create_policy("AA", "100", "JFK", dep, arr, threshold_minutes, multiplier_bps, max_coverage)
+    return int(pid), arr
+
+c11, msg11 = build_contract(fake_exec_prompt=fake_exec_prompt_delay_150, fake_web_render=fake_web_render_delay)
+pid11, arr11 = buy_evaluable_policy(c11, msg11, premium=500, multiplier_bps=5000, max_coverage=250)
+msg11.timestamp = arr11 + SETTLEMENT_BUFFER_SECONDS + 10
+
+try:
+    c11.evaluate_claim(pid11, [
+        "https://www.flightaware.com/live/flight/AAL100",
+        "https://www.flightaware.com/live/flight/AAL100",
+    ])
+    check("exact duplicate URL rejected", False)
+except Exception as e:
+    check(f"exact duplicate URL rejected ({e})", "distinct providers" in str(e))
+
+try:
+    c11.evaluate_claim(pid11, [
+        "https://www.flightaware.com/live/flight/AAL100",
+        "https://flightaware.com/other-page",
+    ])
+    check("www./bare same-provider pair rejected (not genuinely independent)", False)
+except Exception as e:
+    check(f"www./bare same-provider pair rejected ({e})", "distinct providers" in str(e))
+
+print("\nAll duplicate/independence checks passed.")
+
+# --- 15. A genuine, full, end-to-end claim flow ----------------------------
+c12, msg12 = build_contract(fake_exec_prompt=fake_exec_prompt_delay_150, fake_web_render=fake_web_render_delay)
+pid12, arr12 = buy_evaluable_policy(c12, msg12, premium=1000, multiplier_bps=5000, max_coverage=500)
+
+try:
+    c12.evaluate_claim(pid12, [
+        "https://www.flightaware.com/live/flight/AAL100",
+        "https://www.flightstats.com/v2/flight-tracker/AA/100",
+    ])
+    check("evaluate_claim rejected before settlement buffer elapses", False)
+except Exception as e:
+    check(f"evaluate_claim rejected before settlement buffer elapses ({e})", "settlement buffer" in str(e))
+
+msg12.timestamp = arr12 + SETTLEMENT_BUFFER_SECONDS + 10
+verdict_json = c12.evaluate_claim(pid12, [
+    "https://www.flightaware.com/live/flight/AAL100",
+    "https://www.flightstats.com/v2/flight-tracker/AA/100",
+])
+verdict = json.loads(verdict_json)
+check("full flow: 2 independent sources reach quorum", verdict["sources_used"] == 2)
+check("full flow: 150min delay correctly triggers PAYOUT (threshold 60)", verdict["decision"] == "PAYOUT")
+
+p12 = c12.get_policy(pid12)
+check("full flow: status is PAID (not PAID_PARTIAL) when liquidity is sufficient", p12["status"] == "PAID")
+check("full flow: recorded payout_amount_wei matches the full entitled amount (net premium 750 * 0.5x = 375)", p12["payout_amount_wei"] == 375)
+check("full flow: pool_balance correctly debited", int(c12.pool_balance) == 750 - 375)
+
+print("\nFull end-to-end claim flow verified.")
+
+# --- 16. Liquidity shortfall: PAID_PARTIAL when the pool can't cover it ---
+c13, msg13 = build_contract(fake_exec_prompt=fake_exec_prompt_delay_150, fake_web_render=fake_web_render_delay)
+pid13, arr13 = buy_evaluable_policy(c13, msg13, premium=1000, multiplier_bps=20000, max_coverage=2000)
+msg13.timestamp = arr13 + SETTLEMENT_BUFFER_SECONDS + 10
+
+c13.evaluate_claim(pid13, [
+    "https://www.flightaware.com/live/flight/AAL100",
+    "https://www.flightstats.com/v2/flight-tracker/AA/100",
+])
+p13 = c13.get_policy(pid13)
+check("shortfall: status is PAID_PARTIAL, never plain PAID, when underfunded", p13["status"] == "PAID_PARTIAL")
+check("shortfall: payout_amount_wei records the ACTUAL amount sent (750), not the 1500 entitlement", p13["payout_amount_wei"] == 750)
+check("shortfall: pool_balance correctly drained to exactly 0, not negative", int(c13.pool_balance) == 0)
+
+print("\nLiquidity-shortfall (payout) check passed.")
+
+# --- 17. Liquidity shortfall on the refund path ----------------------------
+c14, msg14 = build_contract()
+msg14.value = 1000
+now14 = msg14.timestamp
+dep14, arr14 = now14 + 100, now14 + 200
+pid14 = int(c14.create_policy("AA", "100", "JFK", dep14, arr14, 60, 20000, 1500))
+c14.pool_balance = c14.pool_balance.__class__(200)
+msg14.timestamp = arr14 + CLAIM_EXPIRY_SECONDS + 10
+c14.claim_refund(pid14)
+p14 = c14.get_policy(pid14)
+check("refund shortfall: status is REFUNDED_PARTIAL, never plain REFUNDED, when underfunded", p14["status"] == "REFUNDED_PARTIAL")
+check("refund shortfall: payout_amount_wei records the actual 200 sent, not the 750 owed", p14["payout_amount_wei"] == 200)
+check("refund shortfall: pool_balance correctly drained to 0", int(c14.pool_balance) == 0)
+
+print("\nLiquidity-shortfall (refund) check passed.")
+print("\n=== ALL SMOKE CHECKS PASSED ===")

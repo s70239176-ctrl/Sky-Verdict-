@@ -1,6 +1,6 @@
 // Mirrors SkyVerdict.py's _canonical_host / evaluate_claim independence
 // check, purely so the UI can catch obviously-doomed submissions (a
-// duplicate provider, a non-http(s) URL) before spending gas on a
+// duplicate provider, a non-https URL) before spending gas on a
 // transaction the contract will revert anyway. This is a UX convenience
 // ONLY — the contract is the real enforcement boundary, and this must
 // never be treated as a substitute for it (e.g. it doesn't know the
@@ -14,7 +14,7 @@ export function canonicalHost(url) {
   } catch {
     return null;
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  if (parsed.protocol !== "https:") return null;
   let host = parsed.hostname.toLowerCase();
   if (host.startsWith("www.")) host = host.slice(4);
   return host || null;
@@ -22,7 +22,7 @@ export function canonicalHost(url) {
 
 /**
  * Validates a list of source URLs the same way evaluate_claim/appeal
- * will: each must be a well-formed http(s) URL, and no two may resolve
+ * will: each must be a well-formed https:// URL, and no two may resolve
  * to the same canonical host. Returns { ok, error } — error is a
  * human-readable string naming the first problem found, or null if ok.
  */
@@ -32,7 +32,7 @@ export function validateSourceUrls(urls) {
   for (const url of nonEmpty) {
     const host = canonicalHost(url);
     if (!host) {
-      return { ok: false, error: `"${url}" isn't a valid http(s) URL.` };
+      return { ok: false, error: `"${url}" isn't a valid https:// URL.` };
     }
     if (seen.has(host)) {
       return {
