@@ -36,7 +36,7 @@ closed (`NO_QUORUM`) rather than guessing.
 | Network | GenLayer Studio (hosted) — `studionet` |
 | RPC | `https://studio.genlayer.com/api` |
 | Chain ID | Confirm current value in Studio's own network settings before deploying/connecting — GenLayer's docs show `61999` for Studio-class networks, but hosted Studio's exact backing config is operated independently of this repo and can change |
-| Contract address | `0x005805a09aE697652eD0D8577e7769e3eDcE5585` |
+| Contract address | `0x2FB45FC2CA611B6E992C589b458eF6f432aC3Afe` |
 | Explorer | [explorer-studio.genlayer.com](https://explorer-studio.genlayer.com/) |
 
 This is a **Studio-stage deployment for active testing**, not a Testnet
@@ -157,7 +157,10 @@ Cover DL202 from JFK, delayed more than 90 minutes, up to 3x premium.
 ```
 
 **Evaluate a claim** — these two sources are on the default allowlist
-and confirmed to return real, usable data for flight AA100:
+and confirmed to return real, usable data for flight AA100. Both must
+be `https://` specifically (`http://` is rejected, and so is submitting
+the same provider twice, e.g. `flightaware.com` + `www.flightaware.com`
+— see gotcha #19):
 ```
 https://www.flightaware.com/live/flight/AAL100
 https://www.flightstats.com/v2/flight-tracker/AA/100
@@ -185,14 +188,23 @@ classify_delay_cause(policy_id, "https://www.flightaware.com/live/flight/AAL100"
 ## Security considerations & trust model
 
 See [`docs/architecture.md` §6](docs/architecture.md#6-security-model--trust-assumptions)
-for the full write-up. Summary: no trusted fetcher, source allowlist,
-explicit prompt-injection fencing (applied to both scraped web content
-and free-text user input in `create_policy_from_text`), structured
-output + confidence-floor + multi-source majority aggregation, fail-closed
-timing windows, and single-use appeals. Consensus comparisons
-deliberately exclude free-text model output (explanations/reasons) from
-equality checks — requiring exact agreement on prose caused real
-consensus failures during testing; see gotcha #17.
+for the full write-up. Summary: no trusted fetcher, source allowlist
+with real canonical-hostname parsing (not a substring match — see
+gotcha #19), a genuine independence requirement (source URLs must
+resolve to distinct providers, not just distinct strings), HTTPS
+required specifically (not http-or-https), explicit prompt-injection
+fencing (applied to both scraped web content and free-text user input
+in `create_policy_from_text`), structured output + confidence-floor +
+multi-source majority aggregation, fail-closed timing windows, and
+single-use appeals. Consensus comparisons deliberately exclude
+free-text model output (explanations/reasons) from equality checks —
+requiring exact agreement on prose caused real consensus failures
+during testing; see gotcha #17. Settlement accounting is honest by
+construction: if the shared pool can't cover a claim's full entitled
+payout, the policy is marked `PAID_PARTIAL`/`REFUNDED_PARTIAL` (never
+a plain `PAID`/`REFUNDED` that would misrepresent a partial transfer),
+and `payout_amount_wei` always records the real amount that moved —
+see gotcha #19.
 
 ## Known limitations
 
@@ -201,7 +213,11 @@ Stated plainly:
 - **Not yet security-audited.** Do not point real-value funds at this
   contract before an independent audit.
 - **Payout is capped by the shared premium pool**, not an independent
-  underwriting capital base — see `docs/reliability.md`.
+  underwriting capital base. A shortfall is now always *honestly
+  recorded* (`PAID_PARTIAL`/`REFUNDED_PARTIAL` with the real transferred
+  amount in `payout_amount_wei` — see gotcha #19) rather than silently
+  reported as a full settlement, but the underlying liquidity
+  constraint itself is unchanged — see `docs/reliability.md`.
 - **Evidence sources are scraped tracker pages**, not signed
   airline/GDS APIs. Many trackers are JavaScript-rendered and return no
   usable content to `gl.nondet.web.render`; the domain allowlist and
@@ -210,8 +226,9 @@ Stated plainly:
   nondet contract method has an offline mock test suite
   (`tests/direct/smoke_tests.py`, 26 checks) that verifies the
   surrounding contract logic (validation, fee math, fail-closed
-  behavior) — it cannot test real model output quality or real GenVM
-  consensus timing, which only live Studio testing can confirm.
+  behavior, accounting integrity) — it cannot test real model output
+  quality or real GenVM consensus timing, which only live Studio
+  testing can confirm.
 - **No off-chain keeper bot yet** — `evaluate_claim` must currently be
   triggered manually after the settlement buffer elapses.
 - **Agent-native purchasing is a discoverability layer today, not a
@@ -270,6 +287,6 @@ gltest.config.yaml            # network + test config for the GenLayer CLI
 - **Reliability roadmap (50% → 99%)**: [`docs/reliability.md`](docs/reliability.md)
 - **Distribution / go-to-market**: [`docs/distribution.md`](docs/distribution.md)
 - **Agent integration & Internet Court scope**: [`docs/agent-integration.md`](docs/agent-integration.md)
-- **Every GenVM/SDK surprise hit while shipping this** (18 documented
+- **Every GenVM/SDK surprise hit while shipping this** (19 documented
   gotchas — read this before touching the contract, seriously):
   [`docs/genvm-gotchas.md`](docs/genvm-gotchas.md)
