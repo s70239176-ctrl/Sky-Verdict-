@@ -1,23 +1,34 @@
 # GenLayer CLI / gltest configuration for SkyVerdict.
-# See https://docs.genlayer.com for the current schema — this targets
-# GenLayer Studio / TestnetBradbury as of the 2026 CLI.
+#
+# Rewritten against the actual documented schema (genlayer-test on
+# PyPI) after the original version was found to use unsupported keys
+# across nearly every section (`network` instead of `networks`,
+# `rpc_url` instead of `url`, and a `contracts:`/`test:` block shape
+# that doesn't exist in the real config format at all — see
+# docs/genvm-gotchas.md). That version was written from general
+# knowledge without ever being validated against the real CLI, since
+# this project never had the network access needed to install and run
+# it directly — a version of the same "docs vs. reality" gap this
+# project has hit repeatedly elsewhere.
+#
+# `genlayer-test`'s pytest plugin loads this file for ANY pytest
+# invocation in the project, including `pytest tests/direct` — so an
+# invalid key here blocked the offline unit tests too, even though
+# they don't touch a network at all.
 
-network:
-  # local Studio instance during development
+networks:
   default: studionet
+
+  # Hosted GenLayer Studio — the network this whole project's real
+  # testing has actually run against (same RPC the frontend calls
+  # through frontend/api/rpc.js).
   studionet:
-    rpc_url: "http://localhost:4000/api"
-  testnet_bradbury:
-    rpc_url: "https://bradbury.genlayer.com/api"
+    url: "https://studio.genlayer.com/api"
 
-contracts:
-  SkyVerdict:
-    path: contracts/SkyVerdict.py
-    deploy_args:
-      - creator_address: "${CREATOR_ADDRESS}"
+  # A local `genlayer up` instance, if you're running one instead of
+  # hosted Studio.
+  localnet:
+    url: "http://127.0.0.1:4000/api"
 
-test:
-  direct_dir: tests/direct
-  integration_dir: tests/integration
-  markers:
-    integration: "requires a running GenLayer Studio instance"
+paths:
+  contracts: "contracts"

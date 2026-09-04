@@ -628,3 +628,37 @@ basic on-path attacker in a way https isn't. Tightened to
 test that had been explicitly flagging this gap was flipped to assert
 the fix instead of documenting the gap. All 26 offline checks still
 pass.
+
+## 20. gltest.config.yaml used a schema that doesn't exist — blocked even the offline tests
+`python3 -m pytest tests/direct -q` failed before any test ran, and the
+cause wasn't in `tests/direct` at all — `genlayer-test`'s pytest plugin
+loads `gltest.config.yaml` for *any* pytest invocation in the project,
+so an invalid config broke even fully offline, network-free tests.
+
+The file used almost entirely unsupported keys: `network` (real key:
+`networks`, plural), `rpc_url` (real key: `url`), and an entire
+`contracts:`/`test:` block shape — a per-contract `deploy_args` map and
+`direct_dir`/`integration_dir`/`markers` fields — that doesn't exist in
+the real schema at all. Confirmed against the actual documented schema
+(the `genlayer-test` package on PyPI) rather than guessing again. Same
+root cause as several other gotchas in this file: written from general
+knowledge without ever being validated against the real tool, since
+this project never had the network access needed to install and run
+`gltest` directly.
+
+Fixed by rewriting to the real schema (`networks:` / `paths: contracts:`),
+pointed `studionet` at the same hosted Studio RPC the rest of this
+project actually uses (`https://studio.genlayer.com/api`) rather than
+requiring a local `genlayer up` instance, and registered the
+`@pytest.mark.integration` marker used in `tests/integration/` via a
+separate `pytest.ini` (that marker isn't part of `gltest.config.yaml`
+either).
+
+**Not verified by actually running `pytest`** — this sandbox has no
+network access to install pytest or the `genlayer-test`/`gltest`
+package at all (confirmed repeatedly throughout this project). The
+rewritten YAML is confirmed syntactically valid and matches the
+documented schema field-for-field, but the real, authoritative check —
+does `python3 -m pytest tests/direct -q` actually pass clean — needs to
+happen in an environment with real network access, and its output
+needs to come back here before this can be called fully confirmed.

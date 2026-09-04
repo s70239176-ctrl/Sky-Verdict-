@@ -108,8 +108,10 @@ pytest tests/direct -v
 # or, without pytest (this sandbox never had network access to install it):
 python3 tests/direct/smoke_tests.py
 
-# 2. Against GenLayer Studio (integration)
-genlayer up
+# 2. Against GenLayer Studio (integration) — gltest.config.yaml already
+# points at hosted Studio by default, so no local `genlayer up` needed
+# unless you'd rather test against a local instance (see the `localnet`
+# entry in gltest.config.yaml)
 gltest tests/integration -v
 
 # 3. Deploy
@@ -287,6 +289,6 @@ gltest.config.yaml            # network + test config for the GenLayer CLI
 - **Reliability roadmap (50% → 99%)**: [`docs/reliability.md`](docs/reliability.md)
 - **Distribution / go-to-market**: [`docs/distribution.md`](docs/distribution.md)
 - **Agent integration & Internet Court scope**: [`docs/agent-integration.md`](docs/agent-integration.md)
-- **Every GenVM/SDK surprise hit while shipping this** (19 documented
+- **Every GenVM/SDK surprise hit while shipping this** (20 documented
   gotchas — read this before touching the contract, seriously):
   [`docs/genvm-gotchas.md`](docs/genvm-gotchas.md)
