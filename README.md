@@ -22,6 +22,21 @@ consensus so no single fetch, no single LLM call, and no single party
 is ever trusted alone — if validators can't agree, the contract fails
 closed (`NO_QUORUM`) rather than guessing.
 
+## What's new in v2 (milestone)
+
+| Capability | What changed |
+|---|---|
+| **Underwriter capital pool** | Anyone can `deposit_liquidity()` and earn the pool's premiums / absorb its payouts through shares; exits use a 24h-cooldown two-step withdrawal. |
+| **Collateralized policies** | A policy is only sold if free capital covers its worst case, so a holder can never be shorted again (the v1 `PAID_PARTIAL` gap). |
+| **On-chain risk pricing** | `get_quote` + an enforced maximum payout multiplier from an owner-tunable risk model; live quote in the Buy flow. |
+| **Keeper bounty + queue** | Settling someone else's claim pays a bounty from protocol fees; `get_keeper_queue` lets a bot find work with no indexer. |
+| **Keeper bot** | [`keeper/`](keeper) — settles due claims automatically (`--dry-run` supported, unit-tested URL builder). |
+| **Underwrite page** | New UI: pool health, your position, queue/cancel/execute exits, claims awaiting a keeper. |
+
+Design and trade-offs: [`docs/underwriting.md`](docs/underwriting.md). Offline
+suite is now 87 pytest tests plus the smoke script; the keeper has 4 `node --test` tests.
+The v2 contract is deployed on Studio (address below). Its pool starts empty: underwriters must deposit before policies can be sold.
+
 ## Live demo
 
 | | |
@@ -36,7 +51,7 @@ closed (`NO_QUORUM`) rather than guessing.
 | Network | GenLayer Studio (hosted) — `studionet` |
 | RPC | `https://studio.genlayer.com/api` |
 | Chain ID | Confirm current value in Studio's own network settings before deploying/connecting — GenLayer's docs show `61999` for Studio-class networks, but hosted Studio's exact backing config is operated independently of this repo and can change |
-| Contract address | `0x2FB45FC2CA611B6E992C589b458eF6f432aC3Afe` |
+| Contract address | `0xa50239F70598BC721cDFA29E09FD6317e244E35A` (v2; the earlier v1 deployment was `0x2FB45FC2…3Afe`) |
 | Explorer | [explorer-studio.genlayer.com](https://explorer-studio.genlayer.com/) |
 
 This is a **Studio-stage deployment for active testing**, not a Testnet
@@ -214,12 +229,11 @@ Stated plainly:
 
 - **Not yet security-audited.** Do not point real-value funds at this
   contract before an independent audit.
-- **Payout is capped by the shared premium pool**, not an independent
-  underwriting capital base. A shortfall is now always *honestly
-  recorded* (`PAID_PARTIAL`/`REFUNDED_PARTIAL` with the real transferred
-  amount in `payout_amount_wei` — see gotcha #19) rather than silently
-  reported as a full settlement, but the underlying liquidity
-  constraint itself is unchanged — see `docs/reliability.md`.
+- **Payouts are backed by underwriter capital (v2).** With
+  `collateral_required` on (default), policies are only sold against free
+  capital, so shortfalls cannot occur for new policies. The honest
+  `PAID_PARTIAL` accounting (gotcha #19) remains for the legacy mode. Risk
+  parameters are conservative priors, not fitted — see `docs/underwriting.md`.
 - **Evidence sources are scraped tracker pages**, not signed
   airline/GDS APIs. Many trackers are JavaScript-rendered and return no
   usable content to `gl.nondet.web.render`; the domain allowlist and
@@ -231,8 +245,8 @@ Stated plainly:
   behavior, accounting integrity) — it cannot test real model output
   quality or real GenVM consensus timing, which only live Studio
   testing can confirm.
-- **No off-chain keeper bot yet** — `evaluate_claim` must currently be
-  triggered manually after the settlement buffer elapses.
+- **Keeper bot is a reference implementation** (`keeper/`) — run it yourself
+  or let anyone claim the on-chain bounty; there is no hosted keeper yet.
 - **Agent-native purchasing is a discoverability layer today, not a
   delegation system.** Any funded wallet — human or agent-controlled —
   can already call the contract directly; a bounded, revocable
@@ -251,11 +265,8 @@ Stated plainly:
 - **Visual verification.** Screenshot tracker pages (`gl.nondet.web.render`)
   and pass images to a vision model as a second confirmation channel
   alongside text extraction.
-- **Keeper bot + monitoring.** Auto-call `evaluate_claim` once the
-  settlement buffer elapses for every `ACTIVE` policy, plus a
-  circuit-breaker/monitoring service (`docs/reliability.md`).
-- **Underwriting capital tranche**, so payouts are no longer capped by
-  same-pool premium float alone.
+- **Hosted keeper + monitoring/circuit-breaker** (the bot and bounty exist; see `docs/reliability.md`).
+- **Senior/junior underwriting tranches** and fitted, backtested risk parameters.
 - **Bounded agent delegation.** A real ERC-7710-based flow — a human
   grants an agent a capped, revocable spending permission through their
   own wallet UI, matching Internet Court's own published safety
@@ -272,6 +283,7 @@ Stated plainly:
 
 ```
 contracts/SkyVerdict.py      # the only on-chain contract
+keeper/                       # settlement bot (node) + unit tests
 tests/direct/                 # fast, offline, mocked unit tests (no Studio needed)
 tests/integration/            # gltest-based tests against GenLayer Studio
 frontend/                     # Vite + React + Tailwind app — see frontend/README.md
@@ -282,6 +294,7 @@ gltest.config.yaml            # network + test config for the GenLayer CLI
 
 ## Further reading
 
+- **Underwriting, pricing & keepers (v2)**: [`docs/underwriting.md`](docs/underwriting.md)
 - **PRD**: [`docs/PRD.md`](docs/PRD.md)
 - **TRD**: [`docs/TRD.md`](docs/TRD.md)
 - **SDLC / current project status**: [`docs/SDLC.md`](docs/SDLC.md)

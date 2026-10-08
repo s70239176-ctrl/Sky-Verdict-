@@ -19,6 +19,11 @@ Design summary
                               source once, for edge cases / disputes
 - claim_refund(...)       -> policyholder reclaims premium if the claim
                               window closed with no valid verdict
+- deposit_liquidity / request_withdrawal / execute_withdrawal
+                          -> v2 underwriting: LPs back the pool, earn premiums,
+                             absorb payouts; policies are collateral-checked
+- get_quote / risk pricing -> v2 on-chain pricing; multipliers capped by risk
+- keeper bounty            -> v2 settlers of others' claims are paid from fees
 - admin_* / views         -> allowlist, pause, fee configuration, getters
 
 Every non-deterministic call (web fetch, LLM call) lives inside an inner
@@ -60,6 +65,34 @@ CREATOR_FEE_BPS: int = 2000  # 20% creator (max allowed)
 BPS_DENOMINATOR: int = 10_000
 
 POLICY_STATUS_ACTIVE: str = "ACTIVE"
+# ---- Underwriting (v2) -----------------------------------------------------
+# Seconds an underwriter must wait between request_withdrawal() and
+# execute_withdrawal(). Deliberately longer than SETTLEMENT_BUFFER_SECONDS:
+# an LP who spots a delayed flight on a tracker cannot exit before the
+# claim becomes evaluable and the loss lands on the pool.
+WITHDRAW_COOLDOWN_SECONDS: int = 24 * 60 * 60
+
+# ---- Risk pricing (v2) -----------------------------------------------------
+# Baseline probability (bps) that a flight misses a 60-minute threshold.
+DEFAULT_BASE_DELAY_RISK_BPS: int = 2000
+# Added on top for cancellations (which pay out regardless of threshold).
+CANCELLATION_RISK_BPS: int = 300
+RISK_CAP_BPS: int = 9500
+# Underwriters must keep this share of every net premium as expected
+# margin: expected payout / net premium <= 1 - LP_MARGIN_BPS/BPS.
+LP_MARGIN_BPS: int = 1500
+# (min threshold minutes, multiplier of base risk in bps), checked top-down.
+THRESHOLD_RISK_CURVE: list = [
+    (240, 2500), (180, 3500), (120, 5500), (90, 7000), (60, 10000), (0, 14000),
+]
+
+# ---- Keeper incentive (v2) -------------------------------------------------
+# Paid out of accrued protocol fees to whoever settles a claim that is not
+# their own, so no human or bot has to be trusted to "press the button".
+KEEPER_BOUNTY_BPS: int = 300  # of the policy's net premium
+# Bound on how many recent policies get_keeper_queue scans per call.
+KEEPER_SCAN_LIMIT: int = 500
+
 POLICY_STATUS_PAID: str = "PAID"
 # Pool balance was insufficient to cover the full entitled payout at
 # settlement time. The policy IS resolved (verdict stands, not
@@ -109,6 +142,13 @@ class Policy:
     # Stays 0 for policies that never reach a money-moving outcome
     # (NO_PAYOUT, INDETERMINATE, ACTIVE).
     payout_amount_wei: u256
+    # Pool capital earmarked for this policy while it is unresolved
+    # (max(entitled payout, refund)). Released on settlement/refund, so
+    # reserved_exposure always equals the sum over open policies.
+    reserved_wei: u256
+    # GEN paid to the keeper that settled this policy (0 if the holder
+    # settled it themselves or the bounty fund was empty).
+    keeper_bounty_wei: u256
 
 
 @allow_storage
@@ -144,8 +184,28 @@ class SkyVerdict(gl.Contract):
     # spoofed/attacker-controlled "flight tracker".
     allowlisted_domains: TreeMap[str, bool]
 
+    # ---- Underwriting (v2): LP shares over the pool ----
+    total_shares: u256
+    shares: TreeMap[Address, u256]
+    withdraw_req_shares: TreeMap[Address, u256]
+    withdraw_req_unlock: TreeMap[Address, u256]
+    reserved_exposure: u256     # sum of reserved_wei over unresolved policies
+    # When True, a policy can only be opened if free capital covers its
+    # worst-case liability, so payouts can never be short (PAID_PARTIAL
+    # becomes unreachable for new policies).
+    collateral_required: bool
+
+    # ---- Risk pricing (v2) ----
+    pricing_enforced: bool
+    airline_risk_bps: TreeMap[str, u256]       # base delay risk per airline
+    airport_risk_mult_bps: TreeMap[str, u256]  # 10000 == neutral
+
     def __init__(self, creator_address: str):
         self.owner = gl.message.sender_address
+        self.total_shares = u256(0)
+        self.reserved_exposure = u256(0)
+        self.collateral_required = True
+        self.pricing_enforced = True
         self.creator = Address(creator_address)
         self.paused = False
         # policies (TreeMap[u256, Policy]) starts zero-initialized as an
@@ -345,15 +405,42 @@ fences, no commentary:
         if max_coverage <= 0 or max_coverage > max_possible_payout:
             raise Exception("SkyVerdict: max_coverage exceeds premium * multiplier")
 
-        policy_id = self.next_policy_id
-        self.next_policy_id = u256(int(self.next_policy_id) + 1)
-
         # Fee split happens at intake, not at payout, so the pool's
         # liability accounting (pool_balance) always equals exactly what
         # is owed to policyholders, never inflated by fee revenue.
         protocol_fee = premium * PROTOCOL_FEE_BPS // BPS_DENOMINATOR
         creator_fee = premium * CREATOR_FEE_BPS // BPS_DENOMINATOR
         net_premium = premium - protocol_fee - creator_fee
+
+        # ---- v2 risk pricing: refuse terms the pool could not sustain ----
+        if self.pricing_enforced:
+            allowed = self._max_multiplier_bps(
+                airline_code, departure_airport, threshold_minutes
+            )
+            if payout_multiplier_bps > allowed:
+                raise Exception(
+                    f"SkyVerdict: payout multiplier {payout_multiplier_bps} bps exceeds "
+                    f"the risk-priced maximum {allowed} bps for this flight/threshold"
+                )
+
+        # ---- v2 collateral: worst-case liability must be fully backed ----
+        # Reserve the larger of the payout and the premium refund (the
+        # refund path can fire instead of a payout if nothing resolves).
+        liability = max(
+            min(net_premium * payout_multiplier_bps // BPS_DENOMINATOR, max_coverage),
+            net_premium,
+        )
+        if self.collateral_required:
+            capital_after = int(self.pool_balance) + net_premium
+            if capital_after < int(self.reserved_exposure) + liability:
+                raise Exception(
+                    "SkyVerdict: insufficient underwriting capital to back this "
+                    "policy — lower the payout or wait for more liquidity"
+                )
+
+        policy_id = self.next_policy_id
+        self.next_policy_id = u256(int(self.next_policy_id) + 1)
+        self.reserved_exposure = u256(int(self.reserved_exposure) + liability)
 
         self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) + protocol_fee)
         self.creator_fees_accrued = u256(int(self.creator_fees_accrued) + creator_fee)
@@ -378,9 +465,69 @@ fences, no commentary:
             trip_id=trip_id,
             delay_cause_json="",
             payout_amount_wei=u256(0),
+            reserved_wei=u256(liability),
+            keeper_bounty_wei=u256(0),
         )
         self.policies[policy_id] = policy
         return policy_id
+
+    # -----------------------------------------------------------------
+    # Risk pricing (v2) — deterministic, owner-tunable, on-chain
+    # -----------------------------------------------------------------
+
+    def _risk_bps(self, airline_code: str, airport: str, threshold_minutes: int) -> int:
+        """
+        Estimated probability (bps) that a policy with this threshold pays.
+        base(airline) * threshold curve * airport factor + cancellation risk.
+        The defaults are conservative priors, not historical statistics —
+        the owner tunes them via admin_set_airline_risk / admin_set_airport_risk
+        and docs/reliability.md lists backtesting them against BTS data.
+        """
+        base = self.airline_risk_bps.get(airline_code.upper(), None)
+        base = DEFAULT_BASE_DELAY_RISK_BPS if base is None else int(base)
+
+        factor = THRESHOLD_RISK_CURVE[-1][1]
+        for min_minutes, f in THRESHOLD_RISK_CURVE:
+            if threshold_minutes >= min_minutes:
+                factor = f
+                break
+
+        p = base * factor // BPS_DENOMINATOR
+        mult = self.airport_risk_mult_bps.get(airport.upper(), None)
+        if mult is not None:
+            p = p * int(mult) // BPS_DENOMINATOR
+        p += CANCELLATION_RISK_BPS
+        return max(1, min(p, RISK_CAP_BPS))
+
+    def _max_multiplier_bps(self, airline_code: str, airport: str, threshold_minutes: int) -> int:
+        """Highest payout multiplier whose expected loss leaves LP_MARGIN_BPS of margin."""
+        p = self._risk_bps(airline_code, airport, threshold_minutes)
+        return (BPS_DENOMINATOR - LP_MARGIN_BPS) * BPS_DENOMINATOR // p
+
+    def _now(self) -> int:
+        return int(gl.message.timestamp) if hasattr(gl.message, "timestamp") else 0
+
+    def _release_reserve(self, policy) -> None:
+        released = int(policy.reserved_wei)
+        self.reserved_exposure = u256(max(0, int(self.reserved_exposure) - released))
+        policy.reserved_wei = u256(0)
+
+    def _pay_keeper(self, policy) -> int:
+        """
+        Pay the caller a small bounty (from accrued protocol fees, never
+        from underwriter capital) for settling someone else's claim.
+        Only called on a *resolved* verdict, so NO_QUORUM spam earns nothing.
+        """
+        caller = gl.message.sender_address
+        if caller == policy.holder:
+            return 0
+        bounty = int(policy.premium) * KEEPER_BOUNTY_BPS // BPS_DENOMINATOR
+        bounty = min(bounty, int(self.protocol_fees_accrued))
+        if bounty <= 0:
+            return 0
+        self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) - bounty)
+        policy.keeper_bounty_wei = u256(bounty)
+        return bounty
 
     @gl.public.write.payable
     def create_policy(
@@ -964,9 +1111,13 @@ does not state or clearly imply a cause.
                 POLICY_STATUS_PAID if actual_payout >= entitled_amount
                 else POLICY_STATUS_PAID_PARTIAL
             )
+            self._release_reserve(policy)
+            bounty = self._pay_keeper(policy)
             self.policies[pid] = policy
             if actual_payout > 0:
                 gl.ContractAt(policy.holder).emit_transfer(value=u256(actual_payout))
+            if bounty > 0:
+                gl.ContractAt(gl.message.sender_address).emit_transfer(value=u256(bounty))
             return verdict_json
 
         # decision == "NO_PAYOUT": flight was on-time / under threshold.
@@ -974,7 +1125,11 @@ does not state or clearly imply a cause.
         # shared pool to back other policies — this is a pooled
         # parametric product, not a per-policy escrow refund product.
         policy.status = POLICY_STATUS_EXPIRED_NO_PAYOUT
+        self._release_reserve(policy)
+        bounty = self._pay_keeper(policy)
         self.policies[pid] = policy
+        if bounty > 0:
+            gl.ContractAt(gl.message.sender_address).emit_transfer(value=u256(bounty))
         return verdict_json
 
     def _derive_verdict(self, extractions: list[dict], threshold_minutes: int) -> dict:
@@ -1067,13 +1222,132 @@ does not state or clearly imply a cause.
             POLICY_STATUS_REFUNDED if actual_refund >= entitled_refund
             else POLICY_STATUS_REFUNDED_PARTIAL
         )
+        self._release_reserve(policy)
         self.policies[pid] = policy
         if actual_refund > 0:
             gl.ContractAt(policy.holder).emit_transfer(value=u256(actual_refund))
 
     # -----------------------------------------------------------------
+    # Underwriting (v2) — anyone can back the pool and earn its premiums
+    # -----------------------------------------------------------------
+
+    def _shares_of(self, addr) -> int:
+        v = self.shares.get(addr, None)
+        return 0 if v is None else int(v)
+
+    def _free_capital(self) -> int:
+        return max(0, int(self.pool_balance) - int(self.reserved_exposure))
+
+    @gl.public.write.payable
+    def deposit_liquidity(self) -> u256:
+        """
+        Deposit GEN as underwriting capital and receive pool shares at the
+        current book value (pool_balance / total_shares). Shares earn the
+        net premiums of every policy and absorb every payout — the pool is
+        a mutual, so share price rises on quiet routes and falls on bad days.
+        """
+        self._require_not_paused()
+        amount = int(gl.message.value)
+        if amount <= 0:
+            raise Exception("SkyVerdict: deposit must be > 0")
+
+        total = int(self.total_shares)
+        nav = int(self.pool_balance)
+        if total == 0:
+            # Any premium float that accrued before the first underwriter
+            # existed (only possible with collateral_required off) belongs
+            # to them: they are the sole owner of the pool.
+            minted = amount
+        else:
+            if nav == 0:
+                raise Exception("SkyVerdict: pool is fully drawn down; no new shares can be priced")
+            minted = amount * total // nav
+            if minted <= 0:
+                raise Exception("SkyVerdict: deposit too small to mint a share")
+
+        who = gl.message.sender_address
+        self.shares[who] = u256(self._shares_of(who) + minted)
+        self.total_shares = u256(total + minted)
+        self.pool_balance = u256(nav + amount)
+        return u256(minted)
+
+    @gl.public.write
+    def request_withdrawal(self, share_amount: int) -> None:
+        """Step 1 of 2. Queue shares for exit; executable after WITHDRAW_COOLDOWN_SECONDS."""
+        who = gl.message.sender_address
+        if share_amount <= 0 or share_amount > self._shares_of(who):
+            raise Exception("SkyVerdict: invalid share amount")
+        self.withdraw_req_shares[who] = u256(share_amount)
+        self.withdraw_req_unlock[who] = u256(self._now() + WITHDRAW_COOLDOWN_SECONDS)
+
+    @gl.public.write
+    def cancel_withdrawal(self) -> None:
+        who = gl.message.sender_address
+        self.withdraw_req_shares[who] = u256(0)
+        self.withdraw_req_unlock[who] = u256(0)
+
+    @gl.public.write
+    def execute_withdrawal(self) -> u256:
+        """
+        Step 2 of 2. Burns the queued shares and pays out their pro-rata
+        value at the *current* share price — so an exit after a bad claim
+        realizes that loss. Only capital not reserved against open
+        policies can leave, which is what keeps every policyholder whole.
+        """
+        who = gl.message.sender_address
+        req = int(self.withdraw_req_shares.get(who, None) or 0)
+        if req <= 0:
+            raise Exception("SkyVerdict: no withdrawal requested")
+        if self._now() < int(self.withdraw_req_unlock.get(who, None) or 0):
+            raise Exception("SkyVerdict: withdrawal cooldown has not elapsed")
+        held = self._shares_of(who)
+        if req > held:
+            raise Exception("SkyVerdict: requested shares exceed holdings")
+
+        total = int(self.total_shares)
+        value = req * int(self.pool_balance) // total
+        if value > self._free_capital():
+            raise Exception(
+                "SkyVerdict: capital is reserved against open policies — "
+                "retry after they settle, or cancel and request fewer shares"
+            )
+
+        self.shares[who] = u256(held - req)
+        self.total_shares = u256(total - req)
+        self.pool_balance = u256(int(self.pool_balance) - value)
+        self.withdraw_req_shares[who] = u256(0)
+        self.withdraw_req_unlock[who] = u256(0)
+        if value > 0:
+            gl.ContractAt(who).emit_transfer(value=u256(value))
+        return u256(value)
+
+    # -----------------------------------------------------------------
     # Admin
     # -----------------------------------------------------------------
+
+    @gl.public.write
+    def admin_set_collateral_required(self, value: bool) -> None:
+        self._require_owner()
+        self.collateral_required = value
+
+    @gl.public.write
+    def admin_set_pricing_enforced(self, value: bool) -> None:
+        self._require_owner()
+        self.pricing_enforced = value
+
+    @gl.public.write
+    def admin_set_airline_risk(self, airline_code: str, base_risk_bps: int) -> None:
+        self._require_owner()
+        if base_risk_bps < 1 or base_risk_bps > RISK_CAP_BPS:
+            raise Exception("SkyVerdict: base_risk_bps out of range")
+        self.airline_risk_bps[airline_code.upper()] = u256(base_risk_bps)
+
+    @gl.public.write
+    def admin_set_airport_risk(self, airport: str, mult_bps: int) -> None:
+        self._require_owner()
+        if mult_bps < 1000 or mult_bps > 30000:
+            raise Exception("SkyVerdict: mult_bps must be within 0.1x-3x")
+        self.airport_risk_mult_bps[airport.upper()] = u256(mult_bps)
 
     @gl.public.write
     def admin_set_paused(self, value: bool) -> None:
@@ -1135,15 +1409,89 @@ does not state or clearly imply a cause.
             "trip_id": int(policy.trip_id),
             "delay_cause_json": policy.delay_cause_json,
             "payout_amount_wei": int(policy.payout_amount_wei),
+            "reserved_wei": int(policy.reserved_wei),
+            "keeper_bounty_wei": int(policy.keeper_bounty_wei),
         }
 
     @gl.public.view
     def get_pool(self) -> TreeMap[str, typing.Any]:
+        pool = int(self.pool_balance)
+        reserved = int(self.reserved_exposure)
+        total = int(self.total_shares)
         return {
-            "pool_balance": int(self.pool_balance),
+            "pool_balance": pool,
             "protocol_fees_accrued": int(self.protocol_fees_accrued),
             "creator_fees_accrued": int(self.creator_fees_accrued),
+            # v2 underwriting telemetry
+            "reserved_exposure": reserved,
+            "free_capital": max(0, pool - reserved),
+            "utilization_bps": (reserved * BPS_DENOMINATOR // pool) if pool > 0 else 0,
+            "total_shares": total,
+            # wei of pool value per 1e6 shares-units (1_000_000 == par)
+            "share_price_e6": (pool * 1_000_000 // total) if total > 0 else 1_000_000,
+            "collateral_required": bool(self.collateral_required),
+            "pricing_enforced": bool(self.pricing_enforced),
         }
+
+    @gl.public.view
+    def get_underwriter(self, address: str) -> TreeMap[str, typing.Any]:
+        who = Address(address)
+        held = self._shares_of(who)
+        total = int(self.total_shares)
+        return {
+            "shares": held,
+            "value_wei": (held * int(self.pool_balance) // total) if total > 0 else 0,
+            "pool_share_bps": (held * BPS_DENOMINATOR // total) if total > 0 else 0,
+            "withdraw_requested_shares": int(self.withdraw_req_shares.get(who, None) or 0),
+            "withdraw_unlock_utc": int(self.withdraw_req_unlock.get(who, None) or 0),
+        }
+
+    @gl.public.view
+    def get_quote(
+        self, airline_code: str, departure_airport: str,
+        threshold_minutes: int, desired_coverage_wei: int,
+    ) -> TreeMap[str, typing.Any]:
+        """
+        Price a policy on-chain: the risk estimate, the highest multiplier the
+        contract will accept, and the (gross) premium that buys
+        `desired_coverage_wei` of cover at that multiplier. Also reports
+        whether the pool currently has the free capital to back it.
+        """
+        p = self._risk_bps(airline_code, departure_airport, threshold_minutes)
+        max_mult = self._max_multiplier_bps(airline_code, departure_airport, threshold_minutes)
+        net_needed = -(-desired_coverage_wei * BPS_DENOMINATOR // max_mult)  # ceil
+        net_ratio = BPS_DENOMINATOR - PROTOCOL_FEE_BPS - CREATOR_FEE_BPS
+        gross = -(-net_needed * BPS_DENOMINATOR // net_ratio)
+        liability = max(desired_coverage_wei, net_needed)
+        return {
+            "risk_bps": p,
+            "max_multiplier_bps": max_mult,
+            "recommended_premium_wei": gross,
+            "capacity_ok": self._free_capital() + net_needed >= liability,
+            "free_capital_wei": self._free_capital(),
+        }
+
+    @gl.public.view
+    def get_keeper_queue(self, limit: int) -> list[int]:
+        """
+        Policy ids a keeper can settle *right now* (past the settlement
+        buffer, inside the claim window, still ACTIVE), newest
+        scan window first. Lets any bot find work with no off-chain indexer.
+        """
+        now = self._now()
+        out: list[int] = []
+        top = int(self.next_policy_id) - 1
+        bottom = max(1, top - KEEPER_SCAN_LIMIT + 1)
+        for pid in range(top, bottom - 1, -1):
+            if len(out) >= limit:
+                break
+            p = self.policies.get(u256(pid), None)
+            if p is None or p.status != POLICY_STATUS_ACTIVE:
+                continue
+            arr = int(p.scheduled_arrival_utc)
+            if arr + SETTLEMENT_BUFFER_SECONDS <= now <= arr + CLAIM_EXPIRY_SECONDS:
+                out.append(pid)
+        return out
 
     @gl.public.view
     def get_claim_status(self, policy_id: int) -> str:

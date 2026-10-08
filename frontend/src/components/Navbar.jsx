@@ -5,6 +5,7 @@ const LINKS = [
   { id: "home", label: "Home" },
   { id: "buy", label: "Protect a flight" },
   { id: "policies", label: "My flights" },
+  { id: "underwrite", label: "Underwrite" },
   { id: "transparency", label: "Verdict history" },
 ];
 

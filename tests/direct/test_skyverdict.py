@@ -19,10 +19,22 @@ NOW_AFTER_BUFFER = ARRIVAL + 3 * 60 * 60 + 1
 NOW_AFTER_EXPIRY = ARRIVAL + 14 * 24 * 60 * 60 + 1
 
 
-def make_contract(env, creator="0xCREATOR"):
+def make_contract(env, creator="0xCREATOR", legacy=True):
+    """legacy=True turns off the v2 collateral requirement so the original
+    v1 pooled-float behavior (and its PAID_PARTIAL shortfall paths) stay
+    covered. tests/direct/test_underwriting.py exercises v2 with it on."""
     SkyVerdict = env["module"].SkyVerdict
     env["message"].sender_address = env["Address"]("0xOWNER")
-    return SkyVerdict(creator)
+    c = SkyVerdict(creator)
+    if legacy:
+        c.admin_set_collateral_required(False)
+    return c
+
+
+def holder_transfers(env):
+    """Transfers to the policyholder only — keeper bounties (v2) are asserted
+    separately in test_underwriting.py."""
+    return [t for t in env["evm"].transfers if t[0] == "0xHOLDER"]
 
 
 def buy_policy(env, contract, premium=1000, threshold=180, mult_bps=30000, max_cov=None,
@@ -252,7 +264,7 @@ class TestEvaluateClaim:
         # full one with no trace of the shortfall.
         assert c.get_claim_status(pid) == "PAID_PARTIAL"
         assert c.get_policy(pid)["payout_amount_wei"] == 750
-        assert len(env["evm"].transfers) == 1
+        assert len(holder_transfers(env)) == 1
         to, amount = env["evm"].transfers[0]
         assert to == "0xHOLDER"
         assert amount == 750
@@ -276,7 +288,7 @@ class TestEvaluateClaim:
         c.evaluate_claim(pid, self.ALLOWED)
         assert c.get_claim_status(pid) == "EXPIRED_NO_PAYOUT"
         assert c.get_pool()["pool_balance"] == pool_before
-        assert len(env["evm"].transfers) == 0
+        assert len(holder_transfers(env)) == 0
 
     def test_no_quorum_marks_indeterminate_not_paid(self, fake_gl_env):
         env = fake_gl_env
@@ -295,7 +307,7 @@ class TestEvaluateClaim:
 
         c.evaluate_claim(pid, self.ALLOWED)
         assert c.get_claim_status(pid) == "INDETERMINATE"
-        assert len(env["evm"].transfers) == 0
+        assert len(holder_transfers(env)) == 0
 
     def test_network_failure_on_one_source_still_no_quorum_with_one_left(self, fake_gl_env):
         env = fake_gl_env
@@ -567,7 +579,7 @@ class TestSettlementAccounting:
         assert policy["status"] == "PAID_PARTIAL"
         assert policy["payout_amount_wei"] == 750  # what actually moved
         assert c.get_pool()["pool_balance"] == 0   # pool fully drained, not negative
-        assert env["evm"].transfers == [("0xHOLDER", 750)]
+        assert holder_transfers(env) == [("0xHOLDER", 750)]
 
     def test_fully_covered_payout_marks_plain_paid(self, fake_gl_env):
         env = fake_gl_env
@@ -607,7 +619,7 @@ class TestSettlementAccounting:
         policy = c.get_policy(pid)
         assert policy["status"] == "PAID_PARTIAL"
         assert policy["payout_amount_wei"] == 0
-        assert env["evm"].transfers == []  # no zero-value transfer emitted
+        assert holder_transfers(env) == []  # no zero-value transfer emitted
 
     def test_refund_shortfall_marks_refunded_partial_with_real_amount(self, fake_gl_env):
         env = fake_gl_env
