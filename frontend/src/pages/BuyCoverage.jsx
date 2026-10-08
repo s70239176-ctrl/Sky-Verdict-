@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { createPolicy, getTotalPolicies } from "../lib/genlayerClient";
+import { createPolicy, getTotalPolicies, awaitNewPolicyIds } from "../lib/genlayerClient";
 import { trackPolicyId } from "../lib/localPolicies";
 import { useWallet } from "../context/WalletContext";
 import { useToast } from "../context/ToastContext";
@@ -75,6 +75,8 @@ export default function BuyCoverage({ setView, openPolicy }) {
 
     setBusy(true);
     try {
+      let countBefore = null;
+      try { countBefore = await getTotalPolicies(); } catch { countBefore = null; }
       const tx = await createPolicy({
         airlineCode: form.airlineCode,
         flightNumber: form.flightNumber,
@@ -87,14 +89,16 @@ export default function BuyCoverage({ setView, openPolicy }) {
         premiumWei: Number(form.premiumWei),
       });
 
-      // Prefer a direct return value if the SDK surfaces one; otherwise
-      // fall back to the total-policies counter (this tx was the latest).
+      // Prefer a direct return value if the SDK surfaces one; otherwise wait
+      // for the counter to grow and pick this account's new policy.
       let newId = tx?.returnValue ?? tx?.return_value ?? null;
-      if (newId == null) {
-        try {
-          newId = await getTotalPolicies();
-        } catch {
-          newId = null;
+      if (newId == null && countBefore != null) {
+        const ids = await awaitNewPolicyIds(countBefore, 1, account.address);
+        newId = ids[0] ?? null;
+        if (newId == null) {
+          setError("The purchase wasn't confirmed on-chain. The contract may have rejected it (multiplier above the risk-priced maximum, or no free underwriting capital).");
+          toast.error("Purchase not confirmed — see details below.");
+          return;
         }
       }
 

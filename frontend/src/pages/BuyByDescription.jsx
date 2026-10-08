@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { createPolicyFromText, getTotalPolicies } from "../lib/genlayerClient";
+import { createPolicyFromText, getTotalPolicies, awaitNewPolicyIds } from "../lib/genlayerClient";
 import { trackPolicyId } from "../lib/localPolicies";
 import { useWallet } from "../context/WalletContext";
 import { useToast } from "../context/ToastContext";
@@ -46,6 +46,8 @@ export default function BuyByDescription({ setView, openPolicy }) {
 
     setBusy(true);
     try {
+      let countBefore = null;
+      try { countBefore = await getTotalPolicies(); } catch { countBefore = null; }
       await createPolicyFromText({
         description: description.trim(),
         scheduledDepartureUtc: Number(scheduledDepartureUtc),
@@ -53,10 +55,13 @@ export default function BuyByDescription({ setView, openPolicy }) {
         premiumWei: Number(premiumWei),
       });
       let newId = null;
-      try {
-        newId = await getTotalPolicies();
-      } catch {
-        newId = null;
+      if (countBefore != null) {
+        newId = (await awaitNewPolicyIds(countBefore, 1, account.address))[0] ?? null;
+        if (newId == null) {
+          setError("No policy was created. The description may have been unclear, or the contract rejected the terms (risk-priced maximum / no free capital).");
+          toast.error("Couldn't create a policy from that description.");
+          return;
+        }
       }
       if (newId != null) {
         trackPolicyId(newId);

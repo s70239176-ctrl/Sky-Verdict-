@@ -53,7 +53,8 @@ export default function Underwrite() {
     try {
       await fn();
       toast?.success?.(`${label} submitted — refreshing…`);
-      setTimeout(refresh, 4000);
+      // Studio takes ~10-40s to accept a tx: re-read a few times instead of once.
+      [6000, 18000, 36000].forEach((ms) => setTimeout(refresh, ms));
     } catch (e) {
       toast?.error?.(e?.message || `${label} failed`);
     } finally {
