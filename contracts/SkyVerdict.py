@@ -93,6 +93,35 @@ KEEPER_BOUNTY_BPS: int = 300  # of the policy's net premium
 # Bound on how many recent policies get_keeper_queue scans per call.
 KEEPER_SCAN_LIMIT: int = 500
 
+# ---- Challenge court (v3) --------------------------------------------------
+# A resolved verdict first becomes PROVISIONAL. During the challenge window
+# anyone may post a bond (CHALLENGE_BOND_BPS of the policy's reserved
+# liability) and force a re-evaluation with MORE sources and a stricter
+# quorum. Overturned -> challenger gets the bond back plus a reward from
+# protocol fees; upheld -> the bond is forfeited to underwriters; inconclusive
+# -> the bond is simply returned. A window of 0 disables the court (v2 behavior).
+CHALLENGE_BOND_BPS: int = 1000
+# Keeper bounty split: evaluator (who ran the consensus) / finalizer.
+EVALUATOR_SHARE_NUM: int = 2
+EVALUATOR_SHARE_DEN: int = 3
+
+# ---- Self-calibrating risk (v3) --------------------------------------------
+# Resolved verdicts feed back into each airline's base risk by credibility
+# weighting: Z = n / (n + K); estimate = (1-Z)*prior + Z*observed. Needs at
+# least CALIBRATION_MIN_OBS settled policies and is clamped to
+# [0.5x, 3x] of the prior, so neither a lucky streak nor a flood of cheap
+# policies can drive prices off a cliff.
+CALIBRATION_K: int = 20
+CALIBRATION_MIN_OBS: int = 5
+CALIBRATION_MIN_BPS: int = 5000
+CALIBRATION_MAX_BPS: int = 30000
+
+# ---- Distribution (v3) -----------------------------------------------------
+# A valid referrer earns this share of the premium, carved out of the
+# creator fee (never out of underwriter capital or the protocol fee).
+AFFILIATE_BPS: int = 500
+
+POLICY_STATUS_PROVISIONAL: str = "PROVISIONAL"
 POLICY_STATUS_PAID: str = "PAID"
 # Pool balance was insufficient to cover the full entitled payout at
 # settlement time. The policy IS resolved (verdict stands, not
@@ -149,6 +178,18 @@ class Policy:
     # GEN paid to the keeper that settled this policy (0 if the holder
     # settled it themselves or the bounty fund was empty).
     keeper_bounty_wei: u256
+    # ---- v3 court ----
+    provisional_decision: str    # "PAYOUT" / "NO_PAYOUT" while PROVISIONAL
+    challenge_deadline_utc: u256
+    sources_json: str            # the sources the verdict was reached on
+    evaluator: Address           # who ran the winning evaluation
+    challenged: bool
+    challenger: Address
+    challenge_bond_wei: u256
+    # ---- v3 calibration / distribution ----
+    expected_loss_wei: u256      # pricing model's expected payout at creation
+    has_referrer: bool
+    referrer: Address
 
 
 @allow_storage
@@ -200,7 +241,36 @@ class SkyVerdict(gl.Contract):
     airline_risk_bps: TreeMap[str, u256]       # base delay risk per airline
     airport_risk_mult_bps: TreeMap[str, u256]  # 10000 == neutral
 
-    def __init__(self, creator_address: str):
+    # ---- v3: deployment parameters (fixed at deploy; no admin setter) ----
+    challenge_window_seconds: u256   # 0 == court disabled
+    settlement_buffer_seconds: u256
+    # SANDBOX ONLY: allows insuring flights that already departed so a full
+    # lifecycle can be demonstrated in minutes. Always False in production;
+    # exposed in get_pool so the UI can show a banner.
+    sandbox_mode: bool
+
+    # ---- v3: self-calibrating risk ----
+    obs_count: TreeMap[str, u256]         # resolved policies per airline
+    obs_weighted_bps: TreeMap[str, u256]  # sum of threshold-normalized outcomes
+    expected_loss_total: u256
+    realized_loss_total: u256
+
+    # ---- v3: affiliates ----
+    affiliate_balance: TreeMap[Address, u256]
+    affiliate_earned: TreeMap[Address, u256]
+
+    def __init__(
+        self,
+        creator_address: str,
+        challenge_window_seconds: int = 86400,
+        settlement_buffer_seconds: int = 10800,
+        sandbox_mode: bool = False,
+    ):
+        self.challenge_window_seconds = u256(challenge_window_seconds)
+        self.settlement_buffer_seconds = u256(settlement_buffer_seconds)
+        self.sandbox_mode = bool(sandbox_mode)
+        self.expected_loss_total = u256(0)
+        self.realized_loss_total = u256(0)
         self.owner = gl.message.sender_address
         self.total_shares = u256(0)
         self.reserved_exposure = u256(0)
@@ -373,6 +443,7 @@ fences, no commentary:
         max_coverage: int,
         premium: int,
         trip_id: u256,
+        referrer=None,
     ) -> u256:
         """
         Shared, deterministic policy-opening logic — used by both
@@ -392,7 +463,7 @@ fences, no commentary:
         # No insuring flights that have already departed — removes an
         # entire class of moral-hazard / already-known-outcome exploits.
         now = self._now_opt()
-        if now is not None and scheduled_departure_utc <= now:
+        if now is not None and scheduled_departure_utc <= now and not self.sandbox_mode:
             raise Exception("SkyVerdict: cannot insure a flight that has already departed")
 
         if threshold_minutes <= 0:
@@ -411,6 +482,12 @@ fences, no commentary:
         protocol_fee = premium * PROTOCOL_FEE_BPS // BPS_DENOMINATOR
         creator_fee = premium * CREATOR_FEE_BPS // BPS_DENOMINATOR
         net_premium = premium - protocol_fee - creator_fee
+
+        # ---- v3 affiliate: carved out of the creator fee only ----
+        affiliate_cut = 0
+        if referrer is not None and referrer != holder:
+            affiliate_cut = min(premium * AFFILIATE_BPS // BPS_DENOMINATOR, creator_fee)
+            creator_fee -= affiliate_cut
 
         # ---- v2 risk pricing: refuse terms the pool could not sustain ----
         if self.pricing_enforced:
@@ -442,6 +519,16 @@ fences, no commentary:
         self.next_policy_id = u256(int(self.next_policy_id) + 1)
         self.reserved_exposure = u256(int(self.reserved_exposure) + liability)
 
+        entitled = min(net_premium * payout_multiplier_bps // BPS_DENOMINATOR, max_coverage)
+        expected_loss = entitled * self._risk_bps(
+            airline_code, departure_airport, threshold_minutes
+        ) // BPS_DENOMINATOR
+        if affiliate_cut > 0:
+            self.affiliate_balance[referrer] = u256(self._aff_of(referrer) + affiliate_cut)
+            self.affiliate_earned[referrer] = u256(
+                int(self.affiliate_earned.get(referrer, None) or 0) + affiliate_cut
+            )
+
         self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) + protocol_fee)
         self.creator_fees_accrued = u256(int(self.creator_fees_accrued) + creator_fee)
         self.pool_balance = u256(int(self.pool_balance) + net_premium)
@@ -467,6 +554,16 @@ fences, no commentary:
             payout_amount_wei=u256(0),
             reserved_wei=u256(liability),
             keeper_bounty_wei=u256(0),
+            provisional_decision="",
+            challenge_deadline_utc=u256(0),
+            sources_json="",
+            evaluator=holder,
+            challenged=False,
+            challenger=holder,
+            challenge_bond_wei=u256(0),
+            expected_loss_wei=u256(expected_loss),
+            has_referrer=bool(affiliate_cut > 0),
+            referrer=referrer if referrer is not None else holder,
         )
         self.policies[policy_id] = policy
         return policy_id
@@ -485,12 +582,9 @@ fences, no commentary:
         """
         base = self.airline_risk_bps.get(airline_code.upper(), None)
         base = DEFAULT_BASE_DELAY_RISK_BPS if base is None else int(base)
+        base = self._calibrated_base(airline_code.upper(), base)
 
-        factor = THRESHOLD_RISK_CURVE[-1][1]
-        for min_minutes, f in THRESHOLD_RISK_CURVE:
-            if threshold_minutes >= min_minutes:
-                factor = f
-                break
+        factor = self._threshold_factor(threshold_minutes)
 
         p = base * factor // BPS_DENOMINATOR
         mult = self.airport_risk_mult_bps.get(airport.upper(), None)
@@ -498,6 +592,43 @@ fences, no commentary:
             p = p * int(mult) // BPS_DENOMINATOR
         p += CANCELLATION_RISK_BPS
         return max(1, min(p, RISK_CAP_BPS))
+
+    def _threshold_factor(self, threshold_minutes: int) -> int:
+        factor = THRESHOLD_RISK_CURVE[-1][1]
+        for min_minutes, f in THRESHOLD_RISK_CURVE:
+            if threshold_minutes >= min_minutes:
+                factor = f
+                break
+        return factor
+
+    def _calibrated_base(self, airline: str, prior: int) -> int:
+        """
+        Credibility-weighted blend of the prior and what settled verdicts
+        actually showed for this airline (see CALIBRATION_* constants).
+        Pure deterministic integer math over on-chain counters.
+        """
+        n = int(self.obs_count.get(airline, None) or 0)
+        if n < CALIBRATION_MIN_OBS:
+            return prior
+        observed = int(self.obs_weighted_bps.get(airline, None) or 0) // n
+        z = n * BPS_DENOMINATOR // (n + CALIBRATION_K)
+        blended = (prior * (BPS_DENOMINATOR - z) + observed * z) // BPS_DENOMINATOR
+        lo = max(1, prior * CALIBRATION_MIN_BPS // BPS_DENOMINATOR)
+        hi = prior * CALIBRATION_MAX_BPS // BPS_DENOMINATOR
+        return max(lo, min(blended, hi))
+
+    def _record_observation(self, policy, paid: bool) -> None:
+        """One settled policy -> one calibration observation (airline-level)."""
+        code = policy.airline_code.upper()
+        factor = self._threshold_factor(int(policy.threshold_minutes))
+        weight = (BPS_DENOMINATOR * BPS_DENOMINATOR // factor) if paid else 0
+        self.obs_count[code] = u256(int(self.obs_count.get(code, None) or 0) + 1)
+        self.obs_weighted_bps[code] = u256(
+            int(self.obs_weighted_bps.get(code, None) or 0) + weight
+        )
+
+    def _aff_of(self, addr) -> int:
+        return int(self.affiliate_balance.get(addr, None) or 0)
 
     def _max_multiplier_bps(self, airline_code: str, airport: str, threshold_minutes: int) -> int:
         """Highest payout multiplier whose expected loss leaves LP_MARGIN_BPS of margin."""
@@ -539,22 +670,119 @@ fences, no commentary:
         self.reserved_exposure = u256(max(0, int(self.reserved_exposure) - released))
         policy.reserved_wei = u256(0)
 
-    def _pay_keeper(self, policy) -> int:
+    def _bounty_transfers(self, policy, evaluator, finalizer) -> list:
         """
-        Pay the caller a small bounty (from accrued protocol fees, never
-        from underwriter capital) for settling someone else's claim.
-        Only called on a *resolved* verdict, so NO_QUORUM spam earns nothing.
+        Keeper bounty (from accrued protocol fees, never LP capital): 2/3 to the
+        evaluator, 1/3 to the finalizer; anyone who is the holder gets nothing,
+        and a missing role (None) forfeits its share. Same address in both
+        roles collapses to one transfer. Returns [(address, amount)].
         """
-        caller = gl.message.sender_address
-        if caller == policy.holder:
-            return 0
-        bounty = int(policy.premium) * KEEPER_BOUNTY_BPS // BPS_DENOMINATOR
-        bounty = min(bounty, int(self.protocol_fees_accrued))
-        if bounty <= 0:
-            return 0
-        self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) - bounty)
-        policy.keeper_bounty_wei = u256(bounty)
-        return bounty
+        total = int(policy.premium) * KEEPER_BOUNTY_BPS // BPS_DENOMINATOR
+        total = min(total, int(self.protocol_fees_accrued))
+        if total <= 0:
+            return []
+        ev_part = total * EVALUATOR_SHARE_NUM // EVALUATOR_SHARE_DEN
+        fin_part = total - ev_part
+        if evaluator is None or evaluator == policy.holder:
+            ev_part = 0
+        if finalizer is None or finalizer == policy.holder:
+            fin_part = 0
+        out = []
+        if evaluator is not None and finalizer is not None and evaluator == finalizer:
+            if ev_part + fin_part > 0:
+                out.append((evaluator, ev_part + fin_part))
+        else:
+            if ev_part > 0:
+                out.append((evaluator, ev_part))
+            if fin_part > 0:
+                out.append((finalizer, fin_part))
+        paid = sum(a for _, a in out)
+        if paid <= 0:
+            return []
+        self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) - paid)
+        policy.keeper_bounty_wei = u256(paid)
+        return out
+
+    def _settle(self, pid, policy, decision: str, evaluator, finalizer) -> None:
+        """
+        The single place a resolved verdict moves money. Used by evaluate_claim
+        (court disabled), finalize_claim and challenge_claim, so payout math,
+        reserve release, calibration and bounties can never diverge between paths.
+        """
+        transfers = []
+        paid = False
+        if decision == "PAYOUT":
+            paid = True
+            entitled_amount = min(
+                int(policy.premium) * int(policy.payout_multiplier_bps) // BPS_DENOMINATOR,
+                int(policy.max_coverage),
+            )
+            # min() against pool_balance is a genuine liquidity-shortfall path
+            # (only reachable with collateral_required off): the shortfall is
+            # recorded as PAID_PARTIAL, never as a plain PAID (gotcha #19).
+            actual_payout = min(entitled_amount, int(self.pool_balance))
+            self.pool_balance = u256(int(self.pool_balance) - actual_payout)
+            policy.payout_amount_wei = u256(actual_payout)
+            policy.status = (
+                POLICY_STATUS_PAID if actual_payout >= entitled_amount
+                else POLICY_STATUS_PAID_PARTIAL
+            )
+            if actual_payout > 0:
+                transfers.append((policy.holder, actual_payout))
+            self.realized_loss_total = u256(int(self.realized_loss_total) + actual_payout)
+        else:
+            # NO_PAYOUT: the net premium stays in the pool for underwriters.
+            policy.status = POLICY_STATUS_EXPIRED_NO_PAYOUT
+
+        self.expected_loss_total = u256(
+            int(self.expected_loss_total) + int(policy.expected_loss_wei)
+        )
+        self._record_observation(policy, paid)
+        self._release_reserve(policy)
+        policy.provisional_decision = ""
+        transfers += self._bounty_transfers(policy, evaluator, finalizer)
+        self.policies[pid] = policy
+        for addr, amount in transfers:
+            gl.get_contract_at(addr).emit_transfer(value=u256(amount))
+
+    @gl.public.write.payable
+    def create_policy_referred(
+        self,
+        referrer: str,
+        airline_code: str,
+        flight_number: str,
+        departure_airport: str,
+        scheduled_departure_utc: int,
+        scheduled_arrival_utc: int,
+        threshold_minutes: int,
+        payout_multiplier_bps: int,
+        max_coverage: int,
+    ) -> u256:
+        """create_policy with a referrer who earns AFFILIATE_BPS of the premium
+        out of the creator fee. A self-referral is accepted but pays nothing."""
+        self._require_not_paused()
+        return self._open_policy(
+            holder=gl.message.sender_address,
+            airline_code=airline_code,
+            flight_number=flight_number,
+            departure_airport=departure_airport,
+            scheduled_departure_utc=scheduled_departure_utc,
+            scheduled_arrival_utc=scheduled_arrival_utc,
+            threshold_minutes=threshold_minutes,
+            payout_multiplier_bps=payout_multiplier_bps,
+            max_coverage=max_coverage,
+            premium=int(gl.message.value),
+            trip_id=u256(0),
+            referrer=Address(referrer),
+        )
+
+    @gl.public.write
+    def affiliate_withdraw(self, amount: int) -> None:
+        who = gl.message.sender_address
+        if amount <= 0 or amount > self._aff_of(who):
+            raise Exception("SkyVerdict: amount exceeds your affiliate balance")
+        self.affiliate_balance[who] = u256(self._aff_of(who) - amount)
+        gl.get_contract_at(who).emit_transfer(value=u256(amount))
 
     @gl.public.write.payable
     def create_policy(
@@ -979,7 +1207,7 @@ does not state or clearly imply a cause.
             raise Exception(f"SkyVerdict: policy is not evaluable (status={policy.status})")
 
         now = self._now_opt()
-        if now is not None and now < int(policy.scheduled_arrival_utc) + SETTLEMENT_BUFFER_SECONDS:
+        if now is not None and now < int(policy.scheduled_arrival_utc) + int(self.settlement_buffer_seconds):
             raise Exception("SkyVerdict: settlement buffer has not elapsed yet")
         if now is not None and now > int(policy.scheduled_arrival_utc) + CLAIM_EXPIRY_SECONDS:
             raise Exception("SkyVerdict: claim window expired, use claim_refund")
@@ -1015,6 +1243,149 @@ does not state or clearly imply a cause.
         scheduled_departure_utc = int(policy.scheduled_departure_utc)
         threshold_minutes = int(policy.threshold_minutes)
 
+        verdict_json = self._run_consensus(
+            source_urls, airline_code, flight_number, departure_airport,
+            scheduled_departure_utc, threshold_minutes, MIN_SOURCES_REQUIRED,
+        )
+        verdict = json.loads(verdict_json)
+
+        policy.last_verdict_json = verdict_json
+
+        if verdict["decision"] == "NO_QUORUM":
+            # Not enough independent sources agreed. Leave the policy
+            # evaluable again later (new sources, appeal) rather than
+            # silently failing shut.
+            policy.status = POLICY_STATUS_INDETERMINATE
+            self.policies[pid] = policy
+            return verdict_json
+
+        policy.sources_json = json.dumps(source_urls)
+        caller = gl.message.sender_address
+        if int(self.challenge_window_seconds) == 0:
+            # Court disabled: settle immediately (v2 behavior).
+            self._settle(pid, policy, verdict["decision"], caller, caller)
+            return verdict_json
+
+        # Court enabled: the verdict is PROVISIONAL until the window closes.
+        policy.status = POLICY_STATUS_PROVISIONAL
+        policy.provisional_decision = verdict["decision"]
+        policy.challenge_deadline_utc = u256(self._now() + int(self.challenge_window_seconds))
+        policy.evaluator = caller
+        self.policies[pid] = policy
+        return verdict_json
+
+    # -----------------------------------------------------------------
+    # Challenge court (v3)
+    # -----------------------------------------------------------------
+
+    def _challenge_bond(self, policy) -> int:
+        return max(1, int(policy.reserved_wei) * CHALLENGE_BOND_BPS // BPS_DENOMINATOR)
+
+    @gl.public.write
+    def finalize_claim(self, policy_id: int) -> str:
+        """Permissionless: once the challenge window closes unchallenged, settle for real."""
+        self._require_not_paused()
+        pid = u256(policy_id)
+        policy = self.policies.get(pid, None)
+        if policy is None:
+            raise Exception("SkyVerdict: unknown policy_id")
+        if policy.status != POLICY_STATUS_PROVISIONAL:
+            raise Exception("SkyVerdict: policy is not awaiting finalization")
+        if self._now() < int(policy.challenge_deadline_utc):
+            raise Exception("SkyVerdict: challenge window has not closed yet")
+        decision = policy.provisional_decision
+        self._settle(pid, policy, decision, policy.evaluator, gl.message.sender_address)
+        return decision
+
+    @gl.public.write.payable
+    def challenge_claim(self, policy_id: int, extra_source_urls: list[str]) -> str:
+        """
+        Dispute a PROVISIONAL verdict. Attach at least get_challenge_info()'s
+        bond_required_wei. The same sources PLUS your extra ones are re-read
+        by the validators, and one more valid read is required than the first
+        time. NOTE: a transaction that reverts keeps its attached value in
+        the contract (GenLayer behavior), so check get_challenge_info first.
+        """
+        self._require_not_paused()
+        pid = u256(policy_id)
+        policy = self.policies.get(pid, None)
+        if policy is None:
+            raise Exception("SkyVerdict: unknown policy_id")
+        if policy.status != POLICY_STATUS_PROVISIONAL:
+            raise Exception("SkyVerdict: only a provisional verdict can be challenged")
+        if policy.challenged:
+            raise Exception("SkyVerdict: this verdict was already challenged once")
+        if self._now() >= int(policy.challenge_deadline_utc):
+            raise Exception("SkyVerdict: challenge window has closed")
+
+        bond = int(gl.message.value)
+        if bond < self._challenge_bond(policy):
+            raise Exception("SkyVerdict: bond below the required amount")
+
+        extras = list(extra_source_urls)
+        if len(extras) < 1:
+            raise Exception("SkyVerdict: provide at least one additional source")
+        original = json.loads(policy.sources_json)
+        seen_hosts: set = set()
+        for url in original:
+            seen_hosts.add(self._canonical_host(url))
+        for url in extras:
+            host = self._require_domain_allowed(url)
+            if host in seen_hosts:
+                raise Exception(
+                    f"SkyVerdict: extra sources must be from new providers — '{host}' is already used"
+                )
+            seen_hosts.add(host)
+
+        all_urls = original + extras
+        verdict_json = self._run_consensus(
+            all_urls, policy.airline_code, policy.flight_number,
+            policy.departure_airport, int(policy.scheduled_departure_utc),
+            int(policy.threshold_minutes), MIN_SOURCES_REQUIRED + 1,
+        )
+        verdict = json.loads(verdict_json)
+        challenger = gl.message.sender_address
+
+        policy.challenged = True
+        policy.challenger = challenger
+        policy.challenge_bond_wei = u256(bond)
+
+        if verdict["decision"] == "NO_QUORUM":
+            # Inconclusive: the challenge neither succeeds nor is punished.
+            self.policies[pid] = policy
+            gl.get_contract_at(challenger).emit_transfer(value=u256(bond))
+            return verdict_json
+
+        policy.last_verdict_json = verdict_json
+        provisional = policy.provisional_decision
+        if verdict["decision"] == provisional:
+            # Upheld: the bond is forfeited to the underwriters.
+            self.pool_balance = u256(int(self.pool_balance) + bond)
+            self._settle(pid, policy, provisional, policy.evaluator, None)
+        else:
+            # Overturned: refund + reward (bounded by the protocol fee fund),
+            # the verdict flips, and the original evaluator earns no bounty.
+            reward = min(bond, int(self.protocol_fees_accrued))
+            self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) - reward)
+            self._settle(pid, policy, verdict["decision"], None, None)
+            gl.get_contract_at(challenger).emit_transfer(value=u256(bond + reward))
+        return verdict_json
+
+    def _run_consensus(
+        self,
+        source_urls: list,
+        airline_code: str,
+        flight_number: str,
+        departure_airport: str,
+        scheduled_departure_utc: int,
+        threshold_minutes: int,
+        min_valid: int,
+    ) -> str:
+        """
+        Multi-source fetch + LLM extraction + leader/validator consensus,
+        shared by evaluate_claim (min_valid = MIN_SOURCES_REQUIRED) and
+        challenge_claim (stricter: one more valid read required).
+        """
         # ---- leader function: fetch every source, extract, aggregate ----
         def leader_fn() -> str:
             extractions: list[dict] = []
@@ -1046,7 +1417,7 @@ does not state or clearly imply a cause.
                     "confidence": int(result.get("confidence", 0) or 0),
                 })
 
-            verdict = self._derive_verdict(extractions, threshold_minutes)
+            verdict = self._derive_verdict(extractions, threshold_minutes, min_valid)
             # sort_keys=True makes this deterministic bytes-for-bytes across
             # identical logical content, which matters for the validator's
             # structural comparison below.
@@ -1088,7 +1459,7 @@ does not state or clearly imply a cause.
                     "confidence": int(result.get("confidence", 0) or 0),
                 })
 
-            my_verdict = self._derive_verdict(extractions, threshold_minutes)
+            my_verdict = self._derive_verdict(extractions, threshold_minutes, min_valid)
 
             # Structural + substantive equivalence, NOT byte equality:
             # different validators may see slightly different page
@@ -1105,61 +1476,9 @@ does not state or clearly imply a cause.
                 return False
             return True
 
-        verdict_json = gl.vm.run_nondet(leader_fn, validator_fn)
-        verdict = json.loads(verdict_json)
+        return gl.vm.run_nondet(leader_fn, validator_fn)
 
-        policy.last_verdict_json = verdict_json
-
-        if verdict["decision"] == "NO_QUORUM":
-            # Not enough independent sources agreed. Leave the policy
-            # evaluable again later (new sources, appeal) rather than
-            # silently failing shut.
-            policy.status = POLICY_STATUS_INDETERMINATE
-            self.policies[pid] = policy
-            return verdict_json
-
-        if verdict["decision"] == "PAYOUT":
-            entitled_amount = min(
-                int(policy.premium) * int(policy.payout_multiplier_bps) // BPS_DENOMINATOR,
-                int(policy.max_coverage),
-            )
-            # This min() against pool_balance is a genuine liquidity
-            # shortfall path, not a rounding edge case — a pooled
-            # product can, by design, be asked to pay out more than it
-            # currently holds if several policies resolve PAYOUT before
-            # enough premium has backfilled the pool. What must never
-            # happen is silently transferring less than entitled_amount
-            # while still recording the policy as fully "PAID" with no
-            # trace of the shortfall.
-            actual_payout = min(entitled_amount, int(self.pool_balance))
-            self.pool_balance = u256(int(self.pool_balance) - actual_payout)
-            policy.payout_amount_wei = u256(actual_payout)
-            policy.status = (
-                POLICY_STATUS_PAID if actual_payout >= entitled_amount
-                else POLICY_STATUS_PAID_PARTIAL
-            )
-            self._release_reserve(policy)
-            bounty = self._pay_keeper(policy)
-            self.policies[pid] = policy
-            if actual_payout > 0:
-                gl.ContractAt(policy.holder).emit_transfer(value=u256(actual_payout))
-            if bounty > 0:
-                gl.ContractAt(gl.message.sender_address).emit_transfer(value=u256(bounty))
-            return verdict_json
-
-        # decision == "NO_PAYOUT": flight was on-time / under threshold.
-        # Premium (net of fees, already taken at intake) stays in the
-        # shared pool to back other policies — this is a pooled
-        # parametric product, not a per-policy escrow refund product.
-        policy.status = POLICY_STATUS_EXPIRED_NO_PAYOUT
-        self._release_reserve(policy)
-        bounty = self._pay_keeper(policy)
-        self.policies[pid] = policy
-        if bounty > 0:
-            gl.ContractAt(gl.message.sender_address).emit_transfer(value=u256(bounty))
-        return verdict_json
-
-    def _derive_verdict(self, extractions: list[dict], threshold_minutes: int) -> dict:
+    def _derive_verdict(self, extractions: list[dict], threshold_minutes: int, min_valid: int = MIN_SOURCES_REQUIRED) -> dict:
         """
         Deterministic aggregation rule applied identically by leader and
         every validator. Pure Python, no nondet calls — safe to run
@@ -1167,7 +1486,7 @@ does not state or clearly imply a cause.
         """
         valid = [e for e in extractions if e["ok"] and e["confidence"] >= 50]
 
-        if len(valid) < MIN_SOURCES_REQUIRED:
+        if len(valid) < min_valid:
             return {
                 "decision": "NO_QUORUM",
                 "cancelled": False,
@@ -1252,7 +1571,7 @@ does not state or clearly imply a cause.
         self._release_reserve(policy)
         self.policies[pid] = policy
         if actual_refund > 0:
-            gl.ContractAt(policy.holder).emit_transfer(value=u256(actual_refund))
+            gl.get_contract_at(policy.holder).emit_transfer(value=u256(actual_refund))
 
     # -----------------------------------------------------------------
     # Underwriting (v2) — anyone can back the pool and earn its premiums
@@ -1345,7 +1664,7 @@ does not state or clearly imply a cause.
         self.withdraw_req_shares[who] = u256(0)
         self.withdraw_req_unlock[who] = u256(0)
         if value > 0:
-            gl.ContractAt(who).emit_transfer(value=u256(value))
+            gl.get_contract_at(who).emit_transfer(value=u256(value))
         return u256(value)
 
     # -----------------------------------------------------------------
@@ -1398,7 +1717,7 @@ does not state or clearly imply a cause.
         if amount > int(self.protocol_fees_accrued):
             raise Exception("SkyVerdict: amount exceeds accrued protocol fees")
         self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) - amount)
-        gl.ContractAt(Address(to)).emit_transfer(value=u256(amount))
+        gl.get_contract_at(Address(to)).emit_transfer(value=u256(amount))
 
     @gl.public.write
     def creator_withdraw_fees(self, amount: int) -> None:
@@ -1407,7 +1726,7 @@ does not state or clearly imply a cause.
         if amount > int(self.creator_fees_accrued):
             raise Exception("SkyVerdict: amount exceeds accrued creator fees")
         self.creator_fees_accrued = u256(int(self.creator_fees_accrued) - amount)
-        gl.ContractAt(self.creator).emit_transfer(value=u256(amount))
+        gl.get_contract_at(self.creator).emit_transfer(value=u256(amount))
 
     # -----------------------------------------------------------------
     # Views
@@ -1438,6 +1757,14 @@ does not state or clearly imply a cause.
             "payout_amount_wei": int(policy.payout_amount_wei),
             "reserved_wei": int(policy.reserved_wei),
             "keeper_bounty_wei": int(policy.keeper_bounty_wei),
+            "provisional_decision": policy.provisional_decision,
+            "sources_json": policy.sources_json,
+            "challenge_deadline_utc": int(policy.challenge_deadline_utc),
+            "challenged": policy.challenged,
+            "challenger": policy.challenger.as_hex if policy.challenged else "",
+            "challenge_bond_wei": int(policy.challenge_bond_wei),
+            "expected_loss_wei": int(policy.expected_loss_wei),
+            "referrer": policy.referrer.as_hex if policy.has_referrer else "",
         }
 
     @gl.public.view
@@ -1458,7 +1785,83 @@ does not state or clearly imply a cause.
             "share_price_e6": (pool * 1_000_000 // total) if total > 0 else 1_000_000,
             "collateral_required": bool(self.collateral_required),
             "pricing_enforced": bool(self.pricing_enforced),
+            "challenge_window_seconds": int(self.challenge_window_seconds),
+            "settlement_buffer_seconds": int(self.settlement_buffer_seconds),
+            "sandbox_mode": bool(self.sandbox_mode),
         }
+
+    @gl.public.view
+    def get_challenge_info(self, policy_id: int) -> TreeMap[str, typing.Any]:
+        policy = self.policies.get(u256(policy_id), None)
+        if policy is None:
+            raise Exception("SkyVerdict: unknown policy_id")
+        now = self._now_opt()
+        prov = policy.status == POLICY_STATUS_PROVISIONAL
+        deadline = int(policy.challenge_deadline_utc)
+        return {
+            "status": policy.status,
+            "provisional_decision": policy.provisional_decision,
+            "challenge_deadline_utc": deadline,
+            "bond_required_wei": self._challenge_bond(policy) if prov else 0,
+            "challengeable": bool(prov and not policy.challenged and (now is None or now < deadline)),
+            "finalizable": bool(prov and now is not None and now >= deadline),
+            "challenged": policy.challenged,
+        }
+
+    @gl.public.view
+    def get_calibration(self, airline_code: str) -> TreeMap[str, typing.Any]:
+        code = airline_code.upper()
+        prior = self.airline_risk_bps.get(code, None)
+        prior = DEFAULT_BASE_DELAY_RISK_BPS if prior is None else int(prior)
+        n = int(self.obs_count.get(code, None) or 0)
+        observed = (int(self.obs_weighted_bps.get(code, None) or 0) // n) if n > 0 else 0
+        return {
+            "airline": code,
+            "prior_base_bps": prior,
+            "observations": n,
+            "observed_base_bps": observed,
+            "credibility_bps": (n * BPS_DENOMINATOR // (n + CALIBRATION_K)),
+            "effective_base_bps": self._calibrated_base(code, prior),
+            "calibrating": n >= CALIBRATION_MIN_OBS,
+        }
+
+    @gl.public.view
+    def get_loss_stats(self) -> TreeMap[str, typing.Any]:
+        exp = int(self.expected_loss_total)
+        real = int(self.realized_loss_total)
+        return {
+            "expected_loss_wei": exp,
+            "realized_loss_wei": real,
+            # realized / expected in bps (10000 == pricing was exactly right)
+            "realized_vs_expected_bps": (real * BPS_DENOMINATOR // exp) if exp > 0 else 0,
+            "policies_total": int(self.next_policy_id) - 1,
+        }
+
+    @gl.public.view
+    def get_affiliate(self, address: str) -> TreeMap[str, typing.Any]:
+        who = Address(address)
+        return {
+            "balance_wei": self._aff_of(who),
+            "lifetime_earned_wei": int(self.affiliate_earned.get(who, None) or 0),
+            "affiliate_bps": AFFILIATE_BPS,
+        }
+
+    @gl.public.view
+    def get_finalize_queue(self, limit: int) -> list[int]:
+        """Provisional verdicts whose challenge window has closed (anyone can finalize)."""
+        now = self._now_opt()
+        out: list[int] = []
+        top = int(self.next_policy_id) - 1
+        bottom = max(1, top - KEEPER_SCAN_LIMIT + 1)
+        for pid in range(top, bottom - 1, -1):
+            if len(out) >= limit:
+                break
+            p = self.policies.get(u256(pid), None)
+            if p is None or p.status != POLICY_STATUS_PROVISIONAL:
+                continue
+            if now is None or now >= int(p.challenge_deadline_utc):
+                out.append(pid)
+        return out
 
     @gl.public.view
     def get_underwriter(self, address: str) -> TreeMap[str, typing.Any]:
@@ -1516,7 +1919,7 @@ does not state or clearly imply a cause.
             if p is None or p.status != POLICY_STATUS_ACTIVE:
                 continue
             arr = int(p.scheduled_arrival_utc)
-            if now is None or arr + SETTLEMENT_BUFFER_SECONDS <= now <= arr + CLAIM_EXPIRY_SECONDS:
+            if now is None or arr + int(self.settlement_buffer_seconds) <= now <= arr + CLAIM_EXPIRY_SECONDS:
                 out.append(pid)
         return out
 

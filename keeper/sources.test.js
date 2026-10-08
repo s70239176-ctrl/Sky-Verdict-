@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { sourceUrlsFor, bareNumber, shouldSettle } from "./sources.js";
+import { sourceUrlsFor, bareNumber, shouldSettle, shouldFinalize } from "./sources.js";
 
 test("bareNumber strips a leading airline code only", () => {
   assert.equal(bareNumber("DL", "DL202"), "202");
@@ -30,4 +30,18 @@ test("shouldSettle respects status, buffer and already-handled ids", () => {
   assert.equal(shouldSettle(p, 1000 + 3 * 3600, new Set()), true);
   assert.equal(shouldSettle(p, 1000 + 3 * 3600, new Set([7])), false);
   assert.equal(shouldSettle({ ...p, status: "INDETERMINATE" }, 99999, new Set()), false);
+});
+
+test("shouldSettle honors a custom (sandbox) buffer", () => {
+  const p = { policy_id: 9, status: "ACTIVE", scheduled_arrival_utc: 1000 };
+  assert.equal(shouldSettle(p, 1000, new Set(), 0), true);
+  assert.equal(shouldSettle(p, 1000, new Set(), 3600), false);
+});
+
+test("shouldFinalize waits for the challenge window and never repeats", () => {
+  const p = { policy_id: 4, status: "PROVISIONAL", challenge_deadline_utc: 5000 };
+  assert.equal(shouldFinalize(p, 4999, new Set()), false);
+  assert.equal(shouldFinalize(p, 5000, new Set()), true);
+  assert.equal(shouldFinalize(p, 5000, new Set(["f4"])), false);
+  assert.equal(shouldFinalize({ ...p, status: "ACTIVE" }, 9999, new Set()), false);
 });

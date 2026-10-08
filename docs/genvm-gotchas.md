@@ -685,3 +685,40 @@ evaluated 3h after scheduled arrival, as the README always said. Demos that
 evaluated immediately must now use a flight whose arrival is >3h in the past —
 but then it can't be insured (already departed), so end-to-end demos need real
 waiting or a lowered `SETTLEMENT_BUFFER_SECONDS` on a test deployment.
+
+## 22. `gl.ContractAt` does not exist — every transfer path was broken on-chain
+Found by the first live `finalize_claim` on the v3 sandbox:
+`AttributeError: module 'genlayer.gl' has no attribute 'ContractAt'`. The real
+API is `gl.get_contract_at(address).emit_transfer(value=...)`. Every code path
+that moves money (claim payouts, refunds, LP withdrawals, keeper bounties,
+protocol/creator/affiliate withdrawals) called the non-existent name, so **no
+payout had ever worked on a real chain** — earlier live runs always stopped at
+`NO_QUORUM` or an early revert and never reached a transfer, and the offline mock
+happily provided `ContractAt`, so 90 tests passed anyway.
+
+Fix: `gl.get_contract_at` everywhere. The mock in `tests/direct/conftest.py` and
+`smoke_tests.py` now exposes **only** `get_contract_at`, so using the old name
+fails offline. Verified live: `affiliate_withdraw` and `finalize_claim` (payout of
+15,000 wei, keeper bounty) both transfer successfully.
+
+**Lesson (third time):** an offline mock that is more generous than the real SDK
+hides bugs (#21 `message.timestamp`, #22 `ContractAt`). Mock only what the real
+runtime provides, and run every money path live once.
+
+## 23. Studio can cancel a consensus transaction with `max_recovery_cycles_exceeded`
+A real `evaluate_claim` on Studio came back `CANCELED` with
+`consensus_data.error = "max_recovery_cycles_exceeded"`, zero rounds and no
+validator votes: the network never started consensus. The identical call
+succeeded on retry. This is infrastructure flakiness, not contract logic — the
+policy state is untouched on a cancel. `keeper/keeper.js` never retries
+blindly (it records handled ids), so a cancelled evaluation needs a manual or
+scheduled retry; scripts that drive Studio should retry once or twice.
+
+## 24. A challenge that reverts keeps the bond
+Same GenLayer behavior as the "payable that errors keeps its value" note in
+the Studio gotchas: a `challenge_claim` that reverts (window just closed, bond
+too low, duplicate source) leaves the attached bond in the contract with no
+way to claim it back. `challenge_claim` validates cheaply first; the UI
+disables the button until every checkable condition passes; and the 10-minute
+sandbox window is deliberately long enough to finish a real challenge
+(consensus takes about a minute).

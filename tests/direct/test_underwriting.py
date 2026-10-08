@@ -18,7 +18,7 @@ ALLOWED = [
 
 def make(env):
     env["message"].sender_address = env["Address"]("0xOWNER")
-    c = env["module"].SkyVerdict("0xCREATOR")  # v2 defaults: collateral + pricing ON
+    c = env["module"].SkyVerdict("0xCREATOR", 0, 10800, False)  # v2 behavior: court off, collateral + pricing ON
     return c
 
 

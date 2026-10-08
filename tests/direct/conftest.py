@@ -81,7 +81,7 @@ class FakeVM:
 
 
 class FakeContractProxy:
-    """Stand-in for gl.ContractAt(address) — only emit_transfer is used."""
+    """Stand-in for gl.get_contract_at(address) (the REAL SDK name; gl.ContractAt does not exist — live-run finding) — only emit_transfer is used."""
     def __init__(self, address, evm_sink):
         self.address = address
         self._evm_sink = evm_sink
@@ -146,7 +146,7 @@ def fake_gl_env(monkeypatch):
         message = fake_message
         evm = fake_evm
         vm = fake_vm
-        ContractAt = staticmethod(_contract_at)
+        get_contract_at = staticmethod(_contract_at)  # NOT ContractAt: that name does not exist on real GenVM
 
         class nondet:
             web = fake_web

@@ -7,6 +7,8 @@ import ValidatorConsensus from "../components/ValidatorConsensus";
 import EvidenceTimeline from "../components/EvidenceTimeline";
 import SettlementStatus from "../components/SettlementStatus";
 import ReasoningPanel from "../components/ReasoningPanel";
+import CourtPanel from "../components/CourtPanel";
+import { getDeployParams } from "../lib/v3Client";
 import { useWallet } from "../context/WalletContext";
 import { useToast } from "../context/ToastContext";
 
@@ -51,6 +53,8 @@ export default function PolicyDetail({ policyId, setView }) {
   const { account } = useWallet();
   const toast = useToast();
   const [policy, setPolicy] = useState(null);
+  const [deployParams, setDeployParams] = useState({ settlementBufferSeconds: 10800 });
+  useEffect(() => { getDeployParams().then(setDeployParams).catch(() => {}); }, []);
   const [error, setError] = useState(null);
   const [sourceUrls, setSourceUrls] = useState(["https://flightaware.com/live/", "https://flightradar24.com/"]);
   const [causeUrl, setCauseUrl] = useState("https://flightaware.com/live/");
@@ -106,6 +110,7 @@ export default function PolicyDetail({ policyId, setView }) {
     const beforeStatus = policy?.status;
     const beforeVerdict = policy?.last_verdict_json;
     const beforeCause = policy?.delay_cause_json;
+    const beforeChallenged = policy?.challenged;
     settledRef.current = false;
     setTimedOut(false);
     setElapsedSec(0);
@@ -126,7 +131,7 @@ export default function PolicyDetail({ policyId, setView }) {
       setElapsedSec((s) => s + 1);
     }, 1000);
 
-    const kindLabel = { evaluate: "Evaluation", appeal: "Appeal", refund: "Refund", classify: "Classification" }[kind] || "Action";
+    const kindLabel = { evaluate: "Evaluation", appeal: "Appeal", refund: "Refund", classify: "Classification", challenge: "Challenge", finalize: "Settlement" }[kind] || "Action";
 
     // Independent background poll of the REAL on-chain state. This exists
     // because genlayer-js's write-call promise has, in practice, sometimes
@@ -143,7 +148,8 @@ export default function PolicyDetail({ policyId, setView }) {
     const hasChanged = (fresh) =>
       fresh.status !== beforeStatus ||
       fresh.last_verdict_json !== beforeVerdict ||
-      fresh.delay_cause_json !== beforeCause;
+      fresh.delay_cause_json !== beforeCause ||
+      fresh.challenged !== beforeChallenged;
 
     const startedAt = Date.now();
     pollTimer.current = setInterval(async () => {
@@ -219,7 +225,9 @@ export default function PolicyDetail({ policyId, setView }) {
   // after. Gating here avoids a ~2 minute spinner for a call that reverts.
   // 60s of slack so a slightly-off local clock never blocks a valid call.
   const nowSec = Math.floor(Date.now() / 1000);
-  const evalOpensIn = Number(policy.scheduled_arrival_utc) + 3 * 3600 - nowSec;
+  const bufferSec = deployParams.settlementBufferSeconds;
+  const bufferLabel = bufferSec === 10800 ? "3 hours" : bufferSec >= 3600 ? `${Math.round(bufferSec / 3600)} hours` : bufferSec > 0 ? `${Math.round(bufferSec / 60)} minutes` : "no waiting period (sandbox)";
+  const evalOpensIn = Number(policy.scheduled_arrival_utc) + bufferSec - nowSec;
   const refundOpensIn = Number(policy.scheduled_arrival_utc) + 14 * 86400 - nowSec;
   const tooEarlyToEvaluate = evalOpensIn > 60;
   const tooEarlyToRefund = refundOpensIn > 60;
@@ -434,6 +442,10 @@ export default function PolicyDetail({ policyId, setView }) {
         </div>
       )}
 
+      {policy.status === "PROVISIONAL" && (
+        <CourtPanel policy={policy} policyId={policyId} pending={pending} runWithRadar={runWithRadar} />
+      )}
+
       {(canEvaluate || canAppeal) && (
         <div className="mt-8 border-t rule pt-8">
           <span className="eyebrow text-ivory-soft/40">
@@ -454,7 +466,7 @@ export default function PolicyDetail({ policyId, setView }) {
               <>
                 {tooEarlyToEvaluate && (
                   <p className="mt-2 text-xs text-amber">
-                    Claims open 3 hours after the scheduled arrival (in about {humanWait(evalOpensIn)}) so
+                    Claims open {bufferLabel} after the scheduled arrival (in about {humanWait(evalOpensIn)}) so
                     trackers have time to settle on the real outcome — the contract enforces this.
                   </p>
                 )}

@@ -6,6 +6,7 @@ import {
 import { useWallet } from "../context/WalletContext";
 import { useToast } from "../context/ToastContext";
 import { formatGen, formatUnixUtc } from "../lib/format";
+import ProtocolHealth from "../components/ProtocolHealth";
 
 const inputClass =
   "border rule bg-near-black px-3 py-2.5 font-mono text-sm text-ivory outline-none focus:border-orange/60";
@@ -168,6 +169,8 @@ export default function Underwrite() {
           )}
         </div>
       </section>
+
+      <ProtocolHealth />
 
       <section className="mt-8 border rule p-5">
         <h2 className="font-mono text-sm uppercase tracking-[0.08em] text-orange">Claims awaiting a keeper</h2>
