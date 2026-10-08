@@ -4,6 +4,8 @@ Parametric flight-delay & cancellation insurance, settled trustlessly on
 [GenLayer](https://genlayer.com) — no oracle, no claims desk, no human
 adjudicator.
 
+**Version 0.2.0** · [changelog](CHANGELOG.md) · production `0xC21B201F6a4200788f5FE35620daE5f2072A3DF4`
+
 ## Project summary
 
 Flight-delay insurance today means filing a claim, attaching boarding
@@ -22,51 +24,59 @@ consensus so no single fetch, no single LLM call, and no single party
 is ever trusted alone — if validators can't agree, the contract fails
 closed (`NO_QUORUM`) rather than guessing.
 
-## What's new in v3 (milestone)
+## Version 0.2.0 — what's new
 
-| Capability | What changed |
-|---|---|
-| **Challenge court** | Verdicts are *provisional* for a challenge window. Anyone can bond a dispute with an extra independent source; validators re-read with a stricter quorum. Overturned: bond back + reward. Upheld: bond to underwriters. Inconclusive: bond returned. |
-| **Self-calibrating risk** | Settled verdicts feed back into each airline's risk estimate (credibility-weighted, clamped 0.5×–3×); predicted-vs-realized loss is public. |
-| **Affiliates + widget** | `create_policy_referred` pays a referrer 5% of the premium from the creator fee; embeddable `widget.js`; Partners console with on-chain earnings. |
-| **Two real bugs fixed by live testing** | `gl.ContractAt` doesn't exist (no payout had ever worked on a real chain — now verified: first live payout) and `gl.message.timestamp` doesn't exist (time rules never applied). Gotchas #21–#24. |
-| **Verified deploy path** | `keeper/deploy.mjs`; sandbox deployments (short window, past flights insurable) for demonstrating a full lifecycle in minutes. |
-
-Design, economics and what was/wasn't verified live:
-[`docs/court-calibration-affiliates.md`](docs/court-calibration-affiliates.md).
-Offline suite: 127 pytest tests; keeper: 6 `node --test` tests.
-
-## What's new in v2
+Release **0.2.0** is everything added since the accepted MVP (0.1.0). It
+turns a premium-float prototype into a collateralized, contestable,
+self-pricing insurance protocol. Full detail in [`CHANGELOG.md`](CHANGELOG.md).
 
 | Capability | What changed |
 |---|---|
 | **Underwriter capital pool** | Anyone can `deposit_liquidity()` and earn the pool's premiums / absorb its payouts through shares; exits use a 24h-cooldown two-step withdrawal. |
-| **Collateralized policies** | A policy is only sold if free capital covers its worst case, so a holder can never be shorted again (the v1 `PAID_PARTIAL` gap). |
+| **Collateralized policies** | A policy is only sold if free capital covers its worst case, so a holder can never be shorted (the 0.1 `PAID_PARTIAL` gap). |
 | **On-chain risk pricing** | `get_quote` + an enforced maximum payout multiplier from an owner-tunable risk model; live quote in the Buy flow. |
-| **Keeper bounty + queue** | Settling someone else's claim pays a bounty from protocol fees; `get_keeper_queue` lets a bot find work with no indexer. |
-| **Keeper bot** | [`keeper/`](keeper) — settles due claims automatically (`--dry-run` supported, unit-tested URL builder). |
-| **Underwrite page** | New UI: pool health, your position, queue/cancel/execute exits, claims awaiting a keeper. |
+| **Self-calibrating risk** | Settled verdicts feed back into each airline's risk estimate (credibility-weighted, clamped 0.5x-3x); expected-vs-realized loss is public. |
+| **Challenge court** | Verdicts are *provisional* for a challenge window. Anyone can bond a dispute with an extra independent source; validators re-read with a stricter quorum. Overturned: bond back + reward. Upheld: bond to underwriters. Inconclusive: bond returned. |
+| **Keeper bounty + bot** | Settling a claim pays a bounty from protocol fees (split evaluator / finalizer); `get_keeper_queue` / `get_finalize_queue` need no indexer; [`keeper/`](keeper) automates both. |
+| **Affiliates + widget** | `create_policy_referred` pays a referrer 5% of the premium from the creator fee; embeddable `widget.js`; Partners console with on-chain earnings. |
+| **Underwrite + Partners UI** | Pool health, positions, exits, protocol health, challenge panel, referral/widget builder. |
+| **Two real bugs fixed by live testing** | `gl.ContractAt` doesn't exist (no payout had ever worked on a real chain; now verified live) and `gl.message.timestamp` doesn't exist (time rules never applied). Gotchas #21-#24. |
+| **Verified deploy path + sandbox mode** | `keeper/deploy.mjs`; sandbox deployments (short window, past flights insurable) show a full lifecycle in minutes. |
 
-Design and trade-offs: [`docs/underwriting.md`](docs/underwriting.md). Offline
-suite is now 87 pytest tests plus the smoke script; the keeper has 4 `node --test` tests.
-The v2 contract is deployed on Studio (address below). Its pool starts empty: underwriters must deposit before policies can be sold.
+Design docs: [`docs/underwriting.md`](docs/underwriting.md) (pool, collateral,
+pricing, keepers) and [`docs/court-calibration-affiliates.md`](docs/court-calibration-affiliates.md)
+(court, calibration, affiliates, what was and wasn't verified live).
+Offline suite: 127 pytest tests; keeper: 6 `node --test` tests.
 
 ## Live demo
 
 | | |
 |---|---|
-| Frontend | [sky-verdicts.vercel.app](https://sky-verdicts.vercel.app/) |
-| Try it without a wallet | Click **Connect → Try demo mode** on the live site — generates a throwaway session key instantly, no installs needed |
+| Frontend (production deployment) | [sky-verdicts.vercel.app](https://sky-verdicts.vercel.app/) |
+| Try it without a wallet | Click **Connect -> Try demo mode** on the live site — generates a throwaway session key instantly, no installs needed |
+| Sandbox demo (full lifecycle in ~12 min) | Run the frontend against the sandbox contract below (`VITE_SKYVERDICT_ADDRESS=0x9B646F38cf2A51B4bde67C01F52409F22e78290E`, see `frontend/.env.example`); it shows a SANDBOX banner. Or drive it from the CLI: `cd keeper && SKYVERDICT_ADDRESS=0x9B646F38cf2A51B4bde67C01F52409F22e78290E node live-v3.mjs buy` then `evaluate`, `finalize`. |
 
-## Contract details
+## Contract details (release 0.2.0)
+
+| | Production | Sandbox demo |
+|---|---|---|
+| Network | GenLayer Studio (`studionet`) | GenLayer Studio (`studionet`) |
+| Contract address | `0xC21B201F6a4200788f5FE35620daE5f2072A3DF4` | `0x9B646F38cf2A51B4bde67C01F52409F22e78290E` |
+| Challenge window | 24 h (`86400`) | 10 min (`600`) |
+| Settlement buffer after arrival | 3 h (`10800`) | none (`0`) |
+| Past flights insurable | no | yes (`sandbox_mode`) |
+| Use | real coverage terms | demonstrating buy -> evaluate -> challenge -> finalize -> payout quickly; shows a banner in the UI |
+| Explorer | [explorer-studio.genlayer.com](https://explorer-studio.genlayer.com/) | same |
 
 | | |
 |---|---|
-| Network | GenLayer Studio (hosted) — `studionet` |
 | RPC | `https://studio.genlayer.com/api` |
 | Chain ID | Confirm current value in Studio's own network settings before deploying/connecting — GenLayer's docs show `61999` for Studio-class networks, but hosted Studio's exact backing config is operated independently of this repo and can change |
-| Contract address | `0x4A3cEB1d00F479b8F91A7CF478371D518F7f47E4` (v2, clock-fixed; earlier v1: `0x2FB45FC2…3Afe`) |
-| Explorer | [explorer-studio.genlayer.com](https://explorer-studio.genlayer.com/) |
+| Deprecated | `0x4A3cEB1d00F479b8F91A7CF478371D518F7f47E4` (0.2 pre-release: **cannot pay out**, uses the non-existent `gl.ContractAt`); `0x2FB45FC2CA611B6E992C589b458eF6f432aC3Afe` (0.1) |
+
+Constructor (fixed at deploy, no admin setter):
+`SkyVerdict(creator_address, challenge_window_seconds, settlement_buffer_seconds, sandbox_mode)`.
+Deploy with `keeper/deploy.mjs`. **Sandbox deployments are for demos only.**
 
 This is a **Studio-stage deployment for active testing**, not a Testnet
 Bradbury or mainnet deployment. See [`docs/SDLC.md`](docs/SDLC.md) for
