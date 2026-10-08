@@ -1,0 +1,60 @@
+SkyVerdict 0.2.0 — live verification log (GenLayer Studio, studionet)
+=====================================================================
+Every transaction below was re-checked against the chain: it exists and targets
+the contract shown. Status 7 = accepted; status 8 = canceled. Explorer format:
+https://explorer-studio.genlayer.com/tx/<hash>
+Produced with keeper/live-v3.mjs and keeper/live-check.mjs (throwaway keys).
+
+Contracts
+---------
+PRODUCTION  0xC21B201F6a4200788f5FE35620daE5f2072A3DF4  window 86400s, buffer 10800s, sandbox off
+SANDBOX B   0x4b41329dE08834BF86Ec967451D5Db43fFEBC2fE  window 600s,   buffer 0,      sandbox on
+SANDBOX C   0x9B646F38cf2A51B4bde67C01F52409F22e78290E  window 600s,   buffer 0,      sandbox on (deployed by the project owner)
+SANDBOX A   0x9569ff71A36E885d371C8f7C67983d59262399F7  window 120s,   buffer 0,      sandbox on (found the ContractAt bug; superseded)
+
+1. Sandbox A — the run that found the payout bug
+------------------------------------------------
+deploy           0xa16978da692af10d7c416e4c3118c38c5ad1985a6517db58fef23d3e4a7c44c6   accepted
+buy (referred)   0xd177f8ff441058f3e32c03321a5752bbc9e437c32d5e5d1f0926159ec2f2a1bb   accepted; affiliate credited 500 wei
+evaluate #1      0x63c696ea9e75bd15e862582993ea09463d6e3b428315743bc0f5e2a896c48d36   CANCELED (max_recovery_cycles_exceeded: Studio never started consensus)
+evaluate #2      0xbbcc889819626bd8507f7918efa2edf27ba04667771dae0899e46c88ef3bc4b8   accepted; real consensus on AA100 -> provisional NO_PAYOUT (delay 8 min, 2/2 sources)
+challenge        0x136cda8d1676600808315aada7d92f2be61261bdd406d30476b0a4fc4c1f5868   reverted: sent after the 120s window closed (contract refused, as designed)
+finalize         0xcce46ab395209579a6bc5e4d72e615fc876484a66d13c3c1bfbf87edc2760343   reverted: AttributeError gl.ContractAt (real GenVM has no such attribute)
+Result: led to the fix gl.ContractAt -> gl.get_contract_at (docs/genvm-gotchas.md #22).
+
+2. Sandbox B — full lifecycle to a real payout (fixed code)
+-----------------------------------------------------------
+deploy           0x8d695d58af5b550d8012ecdea238e24bd8714a63953cb5e50605f64d8fd04aa4   accepted
+seed 500,000     0xd6acf5ee2e519748156374bc377db7bf09975fc6d47d1af80ec9c1922f010576   accepted
+buy (referred)   0x6fc257be69d6885bcf21b66d2b624e2e9d23d380cd57254b6449da372f7e9e26   accepted; reserved 15,000; affiliate +500
+evaluate         0x22060c0203a56085ac95a38f19b9a9e701fb24ce4756a3d0fd742b6eb65972cf   real consensus -> provisional PAYOUT (delay 8 min vs threshold 5), no money moved
+challenge        0xc40cb7979a7d91364b656f5e16fd955b675014ad9a422e113b29155a30360b9c   accepted; 3 sources re-read, only 2 valid -> stricter quorum (3) not met -> NO_QUORUM:
+                                                                                        INCONCLUSIVE, bond (1,500) returned, provisional verdict stands
+affiliate        0xffea625b4814d9be38e7fed98712e2cf6e3bbde327a142e15ec8c9fc36d76277   accepted; withdrew 300 of 500 (balance 200) — first working transfer on a real chain
+finalize         0x2d7dbde1440b628dce80e76925e93e448c6613db47cb003e44827938135d1ad8   accepted; status PAID, payout 15,000 wei, reserve released,
+                                                                                        keeper bounty 225, pool 507,500 -> 492,500
+After finalize: expected loss 4,650 vs realized 15,000 (realized/expected 32,258 bps);
+AA calibration: 1 observation, observed_base 7,142 bps (not yet adapting: needs 5).
+
+3. Sandbox C — the owner's sandbox, on-time branch
+--------------------------------------------------
+seed 500,000     0x294138a22825fc1908ae907a71e9befda0f01fe5cf1a1cfb110458b36ebc6d34   accepted
+evaluate         0xcc88ed2037733146f9814bb760ddc0cbfae4bb87e83de0bda1900f552ea9abc9   real consensus -> provisional NO_PAYOUT (delay 0, 2/2 sources)
+finalize         0x637c8d5b22c36274debb96a940cd8d03b78851742c60da1d4c3898616dd8a07c   accepted; status EXPIRED_NO_PAYOUT, reserve released, bounty 225,
+                                                                                        pool 500,000 -> 507,500 (premium stays with underwriters)
+(Policy purchase on this contract: policy #1 created; its transaction hash was not captured.)
+
+4. Production
+-------------
+seed 500,000     0x1fce21c8a6287c5a85edbf7ace7b603311d24903c1baaf051b1c19da17bda38c   accepted
+Policy #1 bought through the live site (demo account) using a widget deep link with ref=0x0d204FfEdEbd600CbF182865e04ab9A2877b23F0
+(UI purchase; hash not captured). Verified by on-chain reads afterwards:
+  get_policy(1): premium 7,500, referrer 0x0d20…23F0, reserved 15,000, expected_loss 3,450
+  get_affiliate(0x0d20…23F0): balance 500, lifetime earned 500
+  get_pool: creator fees 1,500 (2,000 minus the 500 affiliate cut), protocol fees 500, reserved 15,000
+
+Not yet verified live
+---------------------
+- An OVERTURNED challenge (needs the real web to disagree with itself; covered by tests/direct/test_v3.py).
+- LP execute_withdrawal (24h cooldown).
+- A settlement on the production address (policy #1 becomes claimable 3h after its scheduled arrival, then a 24h challenge window).
