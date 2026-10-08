@@ -47,7 +47,7 @@ const steps = {
     // A flight that has already happened: only insurable on a sandbox deployment.
     const dep = now() - 8 * 3600, arr = now() - 2 * 3600;
     await write(lp, "create_policy_referred",
-      [keeper.address, "AA", "100", "JFK", dep, arr, 60, 20000, 20000], 10000n);
+      [keeper.address, "AA", "100", "JFK", dep, arr, Number(process.env.THRESH || 5), 20000, 20000], 10000n);
     console.log("total policies", await read("get_total_policies"));
     console.log("affiliate", J(await read("get_affiliate", [keeper.address])));
     await state("after buy");
