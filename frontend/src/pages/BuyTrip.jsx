@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { createTrip, getTotalPolicies } from "../lib/genlayerClient";
+import { createTrip, getTotalPolicies, awaitNewPolicyIds } from "../lib/genlayerClient";
 import { trackPolicyId } from "../lib/localPolicies";
 import { useWallet } from "../context/WalletContext";
 import { useToast } from "../context/ToastContext";
@@ -78,6 +78,8 @@ export default function BuyTrip({ setView, openPolicy }) {
 
     setBusy(true);
     try {
+      let countBefore = null;
+      try { countBefore = await getTotalPolicies(); } catch { countBefore = null; }
       await createTrip(
         legs.map((l) => ({
           ...l,
@@ -92,13 +94,14 @@ export default function BuyTrip({ setView, openPolicy }) {
       // transaction — the newest n policy_ids (by get_total_policies)
       // are exactly this trip's legs.
       let newPolicyIds = [];
-      try {
-        const total = await getTotalPolicies();
-        newPolicyIds = Array.from({ length: n }, (_, i) => total - n + 1 + i);
+      if (countBefore != null) {
+        newPolicyIds = await awaitNewPolicyIds(countBefore, n, account.address);
+        if (newPolicyIds.length < n) {
+          setError("The trip wasn't confirmed on-chain. The contract may have rejected it (risk-priced maximum, or no free underwriting capital).");
+          toast.error("Trip not confirmed — see details below.");
+          return;
+        }
         newPolicyIds.forEach(trackPolicyId);
-      } catch {
-        // optional convenience only — My Flights' wallet scan still finds
-        // these policies even if this tracking step fails
       }
 
       toast.success(`Trip protected — ${n} flights covered.`);

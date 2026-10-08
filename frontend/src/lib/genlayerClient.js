@@ -406,3 +406,32 @@ export async function getKeeperQueue(limit = 20) {
     address: CONTRACT_ADDRESS, functionName: "get_keeper_queue", args: [Number(limit)],
   });
 }
+
+/**
+ * After a purchase write, find the policy id(s) it actually created.
+ * writeContract returns before the tx is processed, so reading
+ * get_total_policies immediately returns the OLD count (the UI used to open
+ * someone else's policy). Instead: remember the count before the write, poll
+ * until it grows by `expected`, then keep only policies held by this account
+ * (other buyers may interleave). Resolves [] on timeout — which usually means
+ * the contract rejected the purchase (risk-priced max, no capacity, ...).
+ */
+export async function awaitNewPolicyIds(countBefore, expected, holderAddress, timeoutMs = 180000) {
+  const deadline = Date.now() + timeoutMs;
+  const want = Number(countBefore) + expected;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 6000));
+    let total;
+    try { total = Number(await getTotalPolicies()); } catch { continue; }
+    if (total < want) continue;
+    const mine = [];
+    for (let id = Number(countBefore) + 1; id <= total; id++) {
+      try {
+        const p = await getPolicy(id);
+        if (String(p.holder).toLowerCase() === String(holderAddress).toLowerCase()) mine.push(id);
+      } catch { /* skip unreadable */ }
+    }
+    return mine.slice(0, expected);
+  }
+  return [];
+}
