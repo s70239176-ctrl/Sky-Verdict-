@@ -8,7 +8,7 @@ import * as chains from "genlayer-js/chains";
 const ADDRESS = process.env.SKYVERDICT_ADDRESS;
 const chain = chains.studionet;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const J = (v) => JSON.stringify(v, (k, x) => (typeof x === "bigint" ? x.toString() : x));
+export const J = (v) => JSON.stringify(v, (k, x) => (typeof x === "bigint" ? x.toString() : x));
 
 async function retry(fn, label) {
   for (let i = 0; i < 8; i++) {

@@ -51,7 +51,7 @@ The v2 contract is deployed on Studio (address below). Its pool starts empty: un
 | Network | GenLayer Studio (hosted) — `studionet` |
 | RPC | `https://studio.genlayer.com/api` |
 | Chain ID | Confirm current value in Studio's own network settings before deploying/connecting — GenLayer's docs show `61999` for Studio-class networks, but hosted Studio's exact backing config is operated independently of this repo and can change |
-| Contract address | `0xa50239F70598BC721cDFA29E09FD6317e244E35A` (v2; the earlier v1 deployment was `0x2FB45FC2…3Afe`) |
+| Contract address | `0x4A3cEB1d00F479b8F91A7CF478371D518F7f47E4` (v2, clock-fixed; earlier v1: `0x2FB45FC2…3Afe`) |
 | Explorer | [explorer-studio.genlayer.com](https://explorer-studio.genlayer.com/) |
 
 This is a **Studio-stage deployment for active testing**, not a Testnet
