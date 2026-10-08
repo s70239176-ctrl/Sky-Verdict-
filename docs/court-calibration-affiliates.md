@@ -1,4 +1,7 @@
-# v3: challenge court, self-calibrating risk, affiliates
+# Challenge court, self-calibrating risk, affiliates
+
+> Part of release **0.2.0** (developed as the second of two milestone stages; earlier notes and tests call it "v3").
+
 
 v2 made every policy fully collateralized. v3 makes the *outcome* contestable,
 makes pricing learn from real outcomes, and gives the product a distribution

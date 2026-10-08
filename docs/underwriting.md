@@ -1,4 +1,7 @@
-# Underwriting, risk pricing and keepers (v2)
+# Underwriting, risk pricing and keepers
+
+> Part of release **0.2.0** (developed as the first of two milestone stages).
+
 
 v1 sold policies against a pool made only of other customers' premiums. A
 payout larger than the pool was simply shorted (`PAID_PARTIAL`). v2 replaces

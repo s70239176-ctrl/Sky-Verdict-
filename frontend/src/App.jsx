@@ -61,7 +61,7 @@ export default function App() {
           <Navbar view={view} setView={setView} />
           {page}
           <footer className="border-t rule px-6 py-10 text-center font-mono text-xs text-ivory-soft/30 md:px-10 lg:px-16">
-            SkyVerdict — verdicts powered by{" "}
+            SkyVerdict v0.2.0 — verdicts powered by{" "}
             <a href="https://genlayer.com" target="_blank" rel="noreferrer" className="text-ivory-soft/50 hover:text-orange">
               GenLayer
             </a>
