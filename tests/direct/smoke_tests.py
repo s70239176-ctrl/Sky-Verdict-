@@ -95,7 +95,7 @@ def build_contract(fake_exec_prompt=None, fake_web_render=None):
         message = fake_message
         evm = fake_evm
         vm = fake_vm
-        ContractAt = staticmethod(_contract_at)
+        get_contract_at = staticmethod(_contract_at)  # NOT ContractAt: that name does not exist on real GenVM
 
         class nondet:
             web = types.SimpleNamespace(render=staticmethod(fake_web_render)) if fake_web_render else None

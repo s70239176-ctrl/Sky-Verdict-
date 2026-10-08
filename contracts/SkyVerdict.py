@@ -743,7 +743,7 @@ fences, no commentary:
         transfers += self._bounty_transfers(policy, evaluator, finalizer)
         self.policies[pid] = policy
         for addr, amount in transfers:
-            gl.ContractAt(addr).emit_transfer(value=u256(amount))
+            gl.get_contract_at(addr).emit_transfer(value=u256(amount))
 
     @gl.public.write.payable
     def create_policy_referred(
@@ -782,7 +782,7 @@ fences, no commentary:
         if amount <= 0 or amount > self._aff_of(who):
             raise Exception("SkyVerdict: amount exceeds your affiliate balance")
         self.affiliate_balance[who] = u256(self._aff_of(who) - amount)
-        gl.ContractAt(who).emit_transfer(value=u256(amount))
+        gl.get_contract_at(who).emit_transfer(value=u256(amount))
 
     @gl.public.write.payable
     def create_policy(
@@ -1353,7 +1353,7 @@ does not state or clearly imply a cause.
         if verdict["decision"] == "NO_QUORUM":
             # Inconclusive: the challenge neither succeeds nor is punished.
             self.policies[pid] = policy
-            gl.ContractAt(challenger).emit_transfer(value=u256(bond))
+            gl.get_contract_at(challenger).emit_transfer(value=u256(bond))
             return verdict_json
 
         policy.last_verdict_json = verdict_json
@@ -1368,7 +1368,7 @@ does not state or clearly imply a cause.
             reward = min(bond, int(self.protocol_fees_accrued))
             self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) - reward)
             self._settle(pid, policy, verdict["decision"], None, None)
-            gl.ContractAt(challenger).emit_transfer(value=u256(bond + reward))
+            gl.get_contract_at(challenger).emit_transfer(value=u256(bond + reward))
         return verdict_json
 
     def _run_consensus(
@@ -1571,7 +1571,7 @@ does not state or clearly imply a cause.
         self._release_reserve(policy)
         self.policies[pid] = policy
         if actual_refund > 0:
-            gl.ContractAt(policy.holder).emit_transfer(value=u256(actual_refund))
+            gl.get_contract_at(policy.holder).emit_transfer(value=u256(actual_refund))
 
     # -----------------------------------------------------------------
     # Underwriting (v2) — anyone can back the pool and earn its premiums
@@ -1664,7 +1664,7 @@ does not state or clearly imply a cause.
         self.withdraw_req_shares[who] = u256(0)
         self.withdraw_req_unlock[who] = u256(0)
         if value > 0:
-            gl.ContractAt(who).emit_transfer(value=u256(value))
+            gl.get_contract_at(who).emit_transfer(value=u256(value))
         return u256(value)
 
     # -----------------------------------------------------------------
@@ -1717,7 +1717,7 @@ does not state or clearly imply a cause.
         if amount > int(self.protocol_fees_accrued):
             raise Exception("SkyVerdict: amount exceeds accrued protocol fees")
         self.protocol_fees_accrued = u256(int(self.protocol_fees_accrued) - amount)
-        gl.ContractAt(Address(to)).emit_transfer(value=u256(amount))
+        gl.get_contract_at(Address(to)).emit_transfer(value=u256(amount))
 
     @gl.public.write
     def creator_withdraw_fees(self, amount: int) -> None:
@@ -1726,7 +1726,7 @@ does not state or clearly imply a cause.
         if amount > int(self.creator_fees_accrued):
             raise Exception("SkyVerdict: amount exceeds accrued creator fees")
         self.creator_fees_accrued = u256(int(self.creator_fees_accrued) - amount)
-        gl.ContractAt(self.creator).emit_transfer(value=u256(amount))
+        gl.get_contract_at(self.creator).emit_transfer(value=u256(amount))
 
     # -----------------------------------------------------------------
     # Views
