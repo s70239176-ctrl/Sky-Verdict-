@@ -154,7 +154,7 @@ def build_contract(fake_exec_prompt=None, fake_web_render=None):
     sys.modules["SkyVerdict"] = contract_mod
     spec.loader.exec_module(contract_mod)
 
-    contract = contract_mod.SkyVerdict("0xCREATOR")
+    contract = contract_mod.SkyVerdict("0xCREATOR", 0, 10800, False)
     # v1 behavior under test here (pooled premium float, no LP capital);
     # the v2 collateral/underwriting paths live in test_underwriting.py.
     contract.admin_set_collateral_required(False)

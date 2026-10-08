@@ -25,7 +25,7 @@ def make_contract(env, creator="0xCREATOR", legacy=True):
     covered. tests/direct/test_underwriting.py exercises v2 with it on."""
     SkyVerdict = env["module"].SkyVerdict
     env["message"].sender_address = env["Address"]("0xOWNER")
-    c = SkyVerdict(creator)
+    c = SkyVerdict(creator, 0, 10800, False)  # court off: v2 immediate-settlement behavior
     if legacy:
         c.admin_set_collateral_required(False)
     return c
