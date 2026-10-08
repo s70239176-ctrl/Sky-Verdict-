@@ -353,3 +353,58 @@ class TestKeeper:
         assert c.get_keeper_queue(10) == [b]
         as_user(env, "0xK", 0, ARRIVAL + 15 * 24 * 3600)  # expired
         assert c.get_keeper_queue(10) == []
+
+
+# ---------------------------------------------------------------------
+# Real-GenVM clock: no gl.message.timestamp, only gl.message_raw["datetime"]
+# (a live run showed the cooldown stuck at 1970 before this was handled)
+# ---------------------------------------------------------------------
+
+class TestRealRuntimeClock:
+    ISO = "2023-11-14T22:13:20Z"      # == 1_700_000_000
+    EPOCH = 1_700_000_000
+
+    def _runtime_clock(self, env, iso):
+        env["message"].timestamp = 0   # falsy -> contract must use message_raw
+        gl = env["module"].gl
+        if iso is None:
+            gl.message_raw = {}
+        else:
+            gl.message_raw = {"datetime": iso}
+
+    def test_cooldown_uses_message_raw_datetime(self, fake_gl_env):
+        env = fake_gl_env
+        c = make(env)
+        deposit(env, c, "0xLP1", 1_000)
+        self._runtime_clock(env, self.ISO)
+        as_user(env, "0xLP1")
+        c.request_withdrawal(100)
+        assert c.get_underwriter("0xLP1")["withdraw_unlock_utc"] == self.EPOCH + COOLDOWN
+        with pytest.raises(Exception, match="cooldown"):
+            c.execute_withdrawal()
+        self._runtime_clock(env, "2023-11-15T22:13:20Z")   # +24h
+        as_user(env, "0xLP1")
+        assert c.execute_withdrawal() == 100
+
+    def test_fails_closed_without_any_clock(self, fake_gl_env):
+        env = fake_gl_env
+        c = make(env)
+        deposit(env, c, "0xLP1", 1_000)
+        self._runtime_clock(env, None)
+        as_user(env, "0xLP1")
+        with pytest.raises(Exception, match="time unavailable"):
+            c.request_withdrawal(100)
+
+    def test_time_rules_now_apply_on_real_runtime(self, fake_gl_env):
+        env = fake_gl_env
+        c = make(env)
+        deposit(env, c, "0xLP1", 5_000)
+        pid = buy(env, c)
+        # arrival + 1h: still inside the 3h settlement buffer
+        arr_iso = __import__("datetime").datetime.fromtimestamp(
+            ARRIVAL + 3600, tz=__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._runtime_clock(env, arr_iso)
+        as_user(env, "0xKEEPER")
+        env["exec_prompt"].queue = [{"ok": True, "delay_minutes": 200, "cancelled": False, "confidence": 90}] * 4
+        with pytest.raises(Exception, match="buffer"):
+            c.evaluate_claim(pid, ALLOWED)

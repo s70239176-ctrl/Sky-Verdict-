@@ -391,7 +391,7 @@ fences, no commentary:
 
         # No insuring flights that have already departed — removes an
         # entire class of moral-hazard / already-known-outcome exploits.
-        now = gl.message.timestamp if hasattr(gl.message, "timestamp") else None
+        now = self._now_opt()
         if now is not None and scheduled_departure_utc <= now:
             raise Exception("SkyVerdict: cannot insure a flight that has already departed")
 
@@ -504,8 +504,35 @@ fences, no commentary:
         p = self._risk_bps(airline_code, airport, threshold_minutes)
         return (BPS_DENOMINATOR - LP_MARGIN_BPS) * BPS_DENOMINATOR // p
 
+    def _now_opt(self):
+        """
+        Transaction time in unix seconds, or None if the runtime exposes none.
+        Real GenVM has NO `gl.message.timestamp` — the tx time is the ISO
+        string in `gl.message_raw["datetime"]` (found by a live run: the
+        old `hasattr(gl.message, "timestamp")` was always False on-chain, so
+        every time rule — settlement buffer, claim expiry, "already
+        departed" and the withdrawal cooldown — silently never applied).
+        The offline mock still provides `.timestamp`, which wins if present.
+        """
+        ts = getattr(gl.message, "timestamp", None)
+        if ts:
+            return int(ts)
+        try:
+            from datetime import datetime, timezone
+            iso = gl.message_raw["datetime"]
+            dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp())
+        except Exception:
+            return None
+
     def _now(self) -> int:
-        return int(gl.message.timestamp) if hasattr(gl.message, "timestamp") else 0
+        """Like _now_opt but fails closed: money-timing rules must never run on a guessed clock."""
+        t = self._now_opt()
+        if t is None:
+            raise Exception("SkyVerdict: transaction time unavailable")
+        return t
 
     def _release_reserve(self, policy) -> None:
         released = int(policy.reserved_wei)
@@ -951,7 +978,7 @@ does not state or clearly imply a cause.
         if policy.status != POLICY_STATUS_ACTIVE and policy.status != POLICY_STATUS_INDETERMINATE:
             raise Exception(f"SkyVerdict: policy is not evaluable (status={policy.status})")
 
-        now = gl.message.timestamp if hasattr(gl.message, "timestamp") else None
+        now = self._now_opt()
         if now is not None and now < int(policy.scheduled_arrival_utc) + SETTLEMENT_BUFFER_SECONDS:
             raise Exception("SkyVerdict: settlement buffer has not elapsed yet")
         if now is not None and now > int(policy.scheduled_arrival_utc) + CLAIM_EXPIRY_SECONDS:
@@ -1210,7 +1237,7 @@ does not state or clearly imply a cause.
         if policy.status not in (POLICY_STATUS_ACTIVE, POLICY_STATUS_INDETERMINATE):
             raise Exception("SkyVerdict: policy not eligible for refund")
 
-        now = gl.message.timestamp if hasattr(gl.message, "timestamp") else None
+        now = self._now_opt()
         if now is not None and now <= int(policy.scheduled_arrival_utc) + CLAIM_EXPIRY_SECONDS:
             raise Exception("SkyVerdict: claim window has not expired yet")
 
@@ -1478,7 +1505,7 @@ does not state or clearly imply a cause.
         buffer, inside the claim window, still ACTIVE), newest
         scan window first. Lets any bot find work with no off-chain indexer.
         """
-        now = self._now()
+        now = self._now_opt()  # None in some view contexts: then skip the time filter, the keeper re-checks
         out: list[int] = []
         top = int(self.next_policy_id) - 1
         bottom = max(1, top - KEEPER_SCAN_LIMIT + 1)
@@ -1489,7 +1516,7 @@ does not state or clearly imply a cause.
             if p is None or p.status != POLICY_STATUS_ACTIVE:
                 continue
             arr = int(p.scheduled_arrival_utc)
-            if arr + SETTLEMENT_BUFFER_SECONDS <= now <= arr + CLAIM_EXPIRY_SECONDS:
+            if now is None or arr + SETTLEMENT_BUFFER_SECONDS <= now <= arr + CLAIM_EXPIRY_SECONDS:
                 out.append(pid)
         return out
 
