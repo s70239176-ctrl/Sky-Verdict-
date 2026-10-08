@@ -214,6 +214,22 @@ export default function PolicyDetail({ policyId, setView }) {
     verdict = null;
   }
 
+  // Advisory mirrors of the contract's own windows (the contract still
+  // enforces them): claims open 3h after scheduled arrival, refunds 14 days
+  // after. Gating here avoids a ~2 minute spinner for a call that reverts.
+  // 60s of slack so a slightly-off local clock never blocks a valid call.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const evalOpensIn = Number(policy.scheduled_arrival_utc) + 3 * 3600 - nowSec;
+  const refundOpensIn = Number(policy.scheduled_arrival_utc) + 14 * 86400 - nowSec;
+  const tooEarlyToEvaluate = evalOpensIn > 60;
+  const tooEarlyToRefund = refundOpensIn > 60;
+  const humanWait = (sec) => {
+    const h = Math.floor(sec / 3600);
+    if (h >= 48) return `${Math.ceil(h / 24)} days`;
+    const m = Math.ceil((sec % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
   const canEvaluate = policy.status === "ACTIVE";
   const canAppeal = policy.status === "INDETERMINATE" && !policy.appeal_used;
   const canRefund = policy.status === "ACTIVE" || policy.status === "INDETERMINATE";
@@ -433,9 +449,15 @@ export default function PolicyDetail({ policyId, setView }) {
             const filled = sourceUrls.filter(Boolean);
             const { ok, error: sourceError } = validateSourceUrls(filled);
             const belowMin = filled.length < 2; // mirrors MIN_SOURCES_REQUIRED
-            const disabled = pending !== null || belowMin || !ok;
+            const disabled = pending !== null || belowMin || !ok || tooEarlyToEvaluate;
             return (
               <>
+                {tooEarlyToEvaluate && (
+                  <p className="mt-2 text-xs text-amber">
+                    Claims open 3 hours after the scheduled arrival (in about {humanWait(evalOpensIn)}) so
+                    trackers have time to settle on the real outcome — the contract enforces this.
+                  </p>
+                )}
                 {filled.length > 0 && !ok && (
                   <p className="mt-2 text-xs text-amber">{sourceError}</p>
                 )}
@@ -468,11 +490,16 @@ export default function PolicyDetail({ policyId, setView }) {
           </p>
           <button
             onClick={() => runWithRadar("refund", () => claimRefund(policyId))}
-            disabled={pending !== null}
+            disabled={pending !== null || tooEarlyToRefund}
             className="mt-4 border rule px-5 py-2.5 font-mono text-xs uppercase tracking-[0.06em] text-ivory hover:border-amber/50 hover:text-amber disabled:opacity-60"
           >
             {pending === "refund" ? "Confirming…" : "Claim refund"}
           </button>
+          {tooEarlyToRefund && (
+            <p className="mt-2 text-xs text-amber">
+              Refunds open 14 days after the scheduled arrival (in about {humanWait(refundOpensIn)}).
+            </p>
+          )}
           {pending === "refund" && (
             <p className="mt-3 font-mono text-xs text-ivory-soft/40">
               Confirming on-chain — no need to refresh. ({elapsedSec}s elapsed)
