@@ -40,8 +40,9 @@ notes, tests and some doc headings call "v2" and "v3".
   parties).
 - `keeper/`: settlement + finalization bot, `deploy.mjs` (verified deploy path),
   `live-check.mjs` / `live-v3.mjs` live verification scripts.
-- Docs: `docs/underwriting.md`, `docs/court-calibration-affiliates.md`, gotchas
-  #21-#24.
+- Docs: `docs/underwriting.md`, `docs/court-calibration-affiliates.md`,
+  `docs/security.md` (threat model, owner powers, limits), `docs/live-run-0.2.0.txt`
+  (every live transaction hash, verified on-chain), gotchas #21-#24.
 
 ### Fixed
 - **`gl.ContractAt` does not exist on GenVM** — every payout, refund, withdrawal,

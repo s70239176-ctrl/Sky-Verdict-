@@ -318,7 +318,9 @@ gltest.config.yaml            # network + test config for the GenLayer CLI
 
 ## Further reading
 
-- **Underwriting, pricing & keepers (v2)**: [`docs/underwriting.md`](docs/underwriting.md)
+- **Security model (0.2.0)**: [`docs/security.md`](docs/security.md)
+- **Live verification log (0.2.0, every tx hash)**: [`docs/live-run-0.2.0.txt`](docs/live-run-0.2.0.txt)
+- **Underwriting, pricing & keepers**: [`docs/underwriting.md`](docs/underwriting.md)
 - **PRD**: [`docs/PRD.md`](docs/PRD.md)
 - **TRD**: [`docs/TRD.md`](docs/TRD.md)
 - **SDLC / current project status**: [`docs/SDLC.md`](docs/SDLC.md)
