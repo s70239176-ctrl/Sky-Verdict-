@@ -32,7 +32,13 @@ export function sourceUrlsFor(policy) {
 }
 
 /** Decide whether a queued policy is worth a transaction right now. */
-export function shouldSettle(policy, nowSec, settledOrFailed) {
+export function shouldSettle(policy, nowSec, settledOrFailed, bufferSec = 3 * 3600) {
   if (settledOrFailed.has(policy.policy_id)) return false;
-  return policy.status === "ACTIVE" && nowSec >= Number(policy.scheduled_arrival_utc) + 3 * 3600;
+  return policy.status === "ACTIVE" && nowSec >= Number(policy.scheduled_arrival_utc) + bufferSec;
+}
+
+/** A PROVISIONAL verdict whose challenge window has closed can be finalized by anyone. */
+export function shouldFinalize(policy, nowSec, handled) {
+  if (handled.has("f" + policy.policy_id)) return false;
+  return policy.status === "PROVISIONAL" && nowSec >= Number(policy.challenge_deadline_utc);
 }

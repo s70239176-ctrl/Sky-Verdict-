@@ -4,6 +4,8 @@ import { trackPolicyId } from "../lib/localPolicies";
 import { useWallet } from "../context/WalletContext";
 import { useToast } from "../context/ToastContext";
 import RiskQuote from "../components/RiskQuote";
+import { createPolicyReferred } from "../lib/v3Client";
+import { getReferrer } from "../lib/referral";
 
 const DEFAULTS = {
   airlineCode: "DL",
@@ -32,11 +34,11 @@ function Field({ label, hint, children }) {
 const inputClass =
   "border rule bg-near-black px-3 py-2.5 font-mono text-sm text-ivory outline-none focus:border-orange/60";
 
-export default function BuyCoverage({ setView, openPolicy }) {
+export default function BuyCoverage({ setView, openPolicy, prefill }) {
   const { account } = useWallet();
   const toast = useToast();
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState(DEFAULTS);
+  const [form, setForm] = useState(() => ({ ...DEFAULTS, ...(prefill || {}) }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -77,7 +79,7 @@ export default function BuyCoverage({ setView, openPolicy }) {
     try {
       let countBefore = null;
       try { countBefore = await getTotalPolicies(); } catch { countBefore = null; }
-      const tx = await createPolicy({
+      const params = {
         airlineCode: form.airlineCode,
         flightNumber: form.flightNumber,
         departureAirport: form.departureAirport,
@@ -87,7 +89,13 @@ export default function BuyCoverage({ setView, openPolicy }) {
         payoutMultiplierBps: Number(form.payoutMultiplierBps),
         maxCoverage: Number(form.maxCoverage),
         premiumWei: Number(form.premiumWei),
-      });
+      };
+      // A partner link/widget earlier in this browser credits that partner
+      // 5% of the premium (from the creator fee). Self-referrals pay nothing.
+      const referrer = getReferrer();
+      const tx = referrer
+        ? await createPolicyReferred(referrer, params)
+        : await createPolicy(params);
 
       // Prefer a direct return value if the SDK surfaces one; otherwise wait
       // for the counter to grow and pick this account's new policy.

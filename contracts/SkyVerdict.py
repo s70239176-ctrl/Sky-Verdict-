@@ -1758,6 +1758,7 @@ does not state or clearly imply a cause.
             "reserved_wei": int(policy.reserved_wei),
             "keeper_bounty_wei": int(policy.keeper_bounty_wei),
             "provisional_decision": policy.provisional_decision,
+            "sources_json": policy.sources_json,
             "challenge_deadline_utc": int(policy.challenge_deadline_utc),
             "challenged": policy.challenged,
             "challenger": policy.challenger.as_hex if policy.challenged else "",

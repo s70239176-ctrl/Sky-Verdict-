@@ -6,6 +6,10 @@ Usage:
     python deploy/deploy.py --network studionet --creator 0xYourCreatorAddress
     python deploy/deploy.py --network testnet_bradbury --creator 0xYourCreatorAddress
 
+NOTE: keeper/deploy.mjs (genlayer-js) is the VERIFIED deployment path for v3
+(its calls were exercised live on Studio); this Python entrypoint mirrors it
+but was written against an SDK whose client name varies by version.
+
 This intentionally stays thin — the canonical, always-current way to
 deploy is `genlayer deploy` from the CLI (see README.md). This script is
 provided for CI / scripted deployments where a Python entrypoint is more
@@ -22,6 +26,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--network", required=True, choices=["studionet", "testnet_bradbury"])
     parser.add_argument("--creator", required=True, help="Creator address to receive fee share")
+    parser.add_argument("--window", type=int, default=86400, help="challenge window seconds (0 disables the court)")
+    parser.add_argument("--buffer", type=int, default=10800, help="settlement buffer seconds after arrival")
+    parser.add_argument("--sandbox", action="store_true", help="demo deployment: past flights insurable")
     parser.add_argument("--rpc-url", default=None, help="Override RPC URL from gltest.config.yaml")
     args = parser.parse_args()
 
@@ -45,7 +52,7 @@ def main() -> int:
         network=args.network,
         rpc_url=args.rpc_url,
         code=code,
-        constructor_args=[args.creator],
+        constructor_args=[args.creator, args.window, args.buffer, args.sandbox],
     )
     print("Deployed. Contract address:", tx.contract_address)
     print("Transaction hash:", tx.hash)

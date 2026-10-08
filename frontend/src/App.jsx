@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { WalletProvider } from "./context/WalletContext";
 import { ToastProvider } from "./context/ToastContext";
 import Navbar from "./components/Navbar";
@@ -11,10 +11,26 @@ import MyPolicies from "./pages/MyPolicies";
 import PolicyDetail from "./pages/PolicyDetail";
 import Transparency from "./pages/Transparency";
 import Underwrite from "./pages/Underwrite";
+import Partners from "./pages/Partners";
+import { readDeepLink } from "./lib/referral";
+import { getDeployParams } from "./lib/v3Client";
+import { contractConfigured } from "./lib/genlayerClient";
 
 export default function App() {
   const [view, setView] = useState("home");
   const [activePolicyId, setActivePolicyId] = useState(null);
+  // Deep links / the embeddable widget: ?ref=0x..&airline=AA&flight=100&from=JFK&dep=..&arr=..
+  const [deep] = useState(() => readDeepLink());
+  const [sandbox, setSandbox] = useState(false);
+
+  useEffect(() => {
+    if (deep.prefill) setView("buy");
+  }, [deep]);
+
+  useEffect(() => {
+    if (!contractConfigured()) return;
+    getDeployParams().then((p) => setSandbox(p.sandboxMode)).catch(() => {});
+  }, []);
 
   const openPolicy = (id) => {
     setActivePolicyId(id);
@@ -23,12 +39,13 @@ export default function App() {
 
   let page;
   if (view === "home") page = <Home setView={setView} />;
-  else if (view === "buy") page = <BuyCoverage setView={setView} openPolicy={openPolicy} />;
+  else if (view === "buy") page = <BuyCoverage setView={setView} openPolicy={openPolicy} prefill={deep.prefill} />;
   else if (view === "buy-trip") page = <BuyTrip setView={setView} openPolicy={openPolicy} />;
   else if (view === "buy-text") page = <BuyByDescription setView={setView} openPolicy={openPolicy} />;
   else if (view === "policies") page = <MyPolicies setView={setView} openPolicy={openPolicy} />;
   else if (view === "policy-detail") page = <PolicyDetail policyId={activePolicyId} setView={setView} />;
   else if (view === "underwrite") page = <Underwrite />;
+  else if (view === "partners") page = <Partners />;
   else if (view === "transparency") page = <Transparency openPolicy={openPolicy} />;
   else page = <Home setView={setView} />;
 
@@ -36,6 +53,11 @@ export default function App() {
     <WalletProvider>
       <ToastProvider>
         <div className="min-h-screen pb-16 md:pb-0">
+          {sandbox && (
+            <div className="border-b border-amber/40 bg-amber/10 px-6 py-2 text-center font-mono text-xs text-amber">
+              SANDBOX DEPLOYMENT — past flights are insurable and timings are shortened for demos. Not for real coverage.
+            </div>
+          )}
           <Navbar view={view} setView={setView} />
           {page}
           <footer className="border-t rule px-6 py-10 text-center font-mono text-xs text-ivory-soft/30 md:px-10 lg:px-16">

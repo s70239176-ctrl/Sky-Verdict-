@@ -22,7 +22,21 @@ consensus so no single fetch, no single LLM call, and no single party
 is ever trusted alone — if validators can't agree, the contract fails
 closed (`NO_QUORUM`) rather than guessing.
 
-## What's new in v2 (milestone)
+## What's new in v3 (milestone)
+
+| Capability | What changed |
+|---|---|
+| **Challenge court** | Verdicts are *provisional* for a challenge window. Anyone can bond a dispute with an extra independent source; validators re-read with a stricter quorum. Overturned: bond back + reward. Upheld: bond to underwriters. Inconclusive: bond returned. |
+| **Self-calibrating risk** | Settled verdicts feed back into each airline's risk estimate (credibility-weighted, clamped 0.5×–3×); predicted-vs-realized loss is public. |
+| **Affiliates + widget** | `create_policy_referred` pays a referrer 5% of the premium from the creator fee; embeddable `widget.js`; Partners console with on-chain earnings. |
+| **Two real bugs fixed by live testing** | `gl.ContractAt` doesn't exist (no payout had ever worked on a real chain — now verified: first live payout) and `gl.message.timestamp` doesn't exist (time rules never applied). Gotchas #21–#24. |
+| **Verified deploy path** | `keeper/deploy.mjs`; sandbox deployments (short window, past flights insurable) for demonstrating a full lifecycle in minutes. |
+
+Design, economics and what was/wasn't verified live:
+[`docs/court-calibration-affiliates.md`](docs/court-calibration-affiliates.md).
+Offline suite: 127 pytest tests; keeper: 6 `node --test` tests.
+
+## What's new in v2
 
 | Capability | What changed |
 |---|---|

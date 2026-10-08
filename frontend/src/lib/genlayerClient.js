@@ -435,3 +435,12 @@ export async function awaitNewPolicyIds(countBefore, expected, holderAddress, ti
   }
   return [];
 }
+
+// ---- accessors for lib/v3Client.js (same wallet/client state, no duplication) ----
+export function getWriteClient() {
+  return requireClient();
+}
+export function getReadOnlyClient() {
+  requireAddress();
+  return getReadClient();
+}

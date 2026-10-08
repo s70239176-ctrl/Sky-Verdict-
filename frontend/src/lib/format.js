@@ -51,6 +51,7 @@ export const STATUS_META = {
   REFUNDED: { label: "Refunded", color: "text-ivory-soft/70", dot: "bg-ivory-soft/40", verb: "REFUNDED" },
   // Same shortfall concept as PAID_PARTIAL, on the claim_refund path.
   REFUNDED_PARTIAL: { label: "Refunded — partial", color: "text-amber", dot: "bg-amber", verb: "PARTIAL REFUND" },
+  PROVISIONAL: { label: "Verdict reached — challenge window", color: "text-blue", dot: "bg-blue", verb: "PROVISIONAL" },
   INDETERMINATE: { label: "Awaiting appeal", color: "text-amber", dot: "bg-amber", verb: "NO QUORUM" },
 };
 

@@ -12,7 +12,7 @@
 // Hosted Studio rate-limits RPC (~30 req/min), so calls are spaced out.
 import { createClient, createAccount } from "genlayer-js";
 import * as chains from "genlayer-js/chains";
-import { sourceUrlsFor, shouldSettle } from "./sources.js";
+import { sourceUrlsFor, shouldSettle, shouldFinalize } from "./sources.js";
 
 const args = new Set(process.argv.slice(2));
 const DRY = args.has("--dry-run");
@@ -44,7 +44,40 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const handled = new Set(); // policy ids this process already attempted
 
+async function finalizePass() {
+  let queue;
+  try {
+    queue = await client.readContract({ address: ADDRESS, functionName: "get_finalize_queue", args: [MAX_PER_PASS * 3] });
+  } catch { return; } // pre-v3 contract: no court, nothing to finalize
+  if (queue.length) log(`finalize queue: ${queue.map((i) => "#" + i).join(" ")}`);
+  let sent = 0;
+  for (const id of queue) {
+    if (sent >= MAX_PER_PASS) break;
+    await sleep(SPACING_MS);
+    const policy = await client.readContract({ address: ADDRESS, functionName: "get_policy", args: [Number(id)] });
+    if (!shouldFinalize(policy, Math.floor(Date.now() / 1000), handled)) continue;
+    if (DRY) { log(`[dry-run] would finalize #${id} (${policy.provisional_decision})`); continue; }
+    handled.add("f" + policy.policy_id);
+    log(`finalizing #${id} …`);
+    try {
+      const hash = await client.writeContract({ address: ADDRESS, functionName: "finalize_claim", args: [Number(id)] });
+      await client.waitForTransactionReceipt({ hash, status: "ACCEPTED", retries: 60, interval: 5000 });
+      const after = await client.readContract({ address: ADDRESS, functionName: "get_policy", args: [Number(id)] });
+      log(`#${id} -> ${after.status} (payout ${after.payout_amount_wei}, bounty ${after.keeper_bounty_wei})`);
+      sent++;
+    } catch (e) {
+      log(`#${id} finalize failed: ${e?.message || e}`);
+    }
+  }
+}
+
 async function pass() {
+  let bufferSec = 3 * 3600;
+  try {
+    const pool = await client.readContract({ address: ADDRESS, functionName: "get_pool", args: [] });
+    bufferSec = Number(pool.settlement_buffer_seconds ?? bufferSec);
+  } catch { /* keep default */ }
+  await finalizePass();
   const queue = await client.readContract({
     address: ADDRESS, functionName: "get_keeper_queue", args: [MAX_PER_PASS * 3],
   });
@@ -54,7 +87,7 @@ async function pass() {
     if (sent >= MAX_PER_PASS) break;
     await sleep(SPACING_MS);
     const policy = await client.readContract({ address: ADDRESS, functionName: "get_policy", args: [Number(id)] });
-    if (!shouldSettle(policy, Math.floor(Date.now() / 1000), handled)) continue;
+    if (!shouldSettle(policy, Math.floor(Date.now() / 1000), handled, bufferSec)) continue;
     const urls = sourceUrlsFor(policy);
     if (DRY) {
       log(`[dry-run] would settle #${id} ${policy.airline_code}${policy.flight_number} with`, urls);
