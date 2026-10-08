@@ -10,6 +10,7 @@ import BuyByDescription from "./pages/BuyByDescription";
 import MyPolicies from "./pages/MyPolicies";
 import PolicyDetail from "./pages/PolicyDetail";
 import Transparency from "./pages/Transparency";
+import Underwrite from "./pages/Underwrite";
 
 export default function App() {
   const [view, setView] = useState("home");
@@ -27,6 +28,7 @@ export default function App() {
   else if (view === "buy-text") page = <BuyByDescription setView={setView} openPolicy={openPolicy} />;
   else if (view === "policies") page = <MyPolicies setView={setView} openPolicy={openPolicy} />;
   else if (view === "policy-detail") page = <PolicyDetail policyId={activePolicyId} setView={setView} />;
+  else if (view === "underwrite") page = <Underwrite />;
   else if (view === "transparency") page = <Transparency openPolicy={openPolicy} />;
   else page = <Home setView={setView} />;
 

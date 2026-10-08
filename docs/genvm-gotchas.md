@@ -662,3 +662,26 @@ documented schema field-for-field, but the real, authoritative check —
 does `python3 -m pytest tests/direct -q` actually pass clean — needs to
 happen in an environment with real network access, and its output
 needs to come back here before this can be called fully confirmed.
+
+## 21. `gl.message.timestamp` does not exist on real GenVM — every time rule was silently off
+Found by the first live run of the v2 contract: `request_withdrawal` stored
+`withdraw_unlock_utc = 86400` (1970 + the 24h cooldown), so `execute_withdrawal`
+could never succeed. Root cause: the contract read time as
+`gl.message.timestamp if hasattr(gl.message, "timestamp") else None`, and on
+real GenVM `hasattr` is always False — the tx time is the ISO string in
+`gl.message_raw["datetime"]`. Because the original code treated "no clock" as
+"skip the check", the **v1 settlement buffer, claim expiry and "cannot insure a
+departed flight" rules were never enforced on-chain** either. The offline mock
+supplied `.timestamp`, which is why 87 tests never saw it.
+
+Fix: `_now_opt()` reads `message_raw["datetime"]` (mock `.timestamp` still wins),
+and `_now()` fails closed (reverts) when no clock is available, so money-timing
+rules can never run on a guessed time. Verified live: unlock time is now real,
+`evaluate_claim` inside the buffer and `claim_refund` before expiry both revert.
+Regression tests: `TestRealRuntimeClock` in `tests/direct/test_underwriting.py`.
+
+**Behavior change worth knowing:** with the clock fixed, a claim can only be
+evaluated 3h after scheduled arrival, as the README always said. Demos that
+evaluated immediately must now use a flight whose arrival is >3h in the past —
+but then it can't be insured (already departed), so end-to-end demos need real
+waiting or a lowered `SETTLEMENT_BUFFER_SECONDS` on a test deployment.

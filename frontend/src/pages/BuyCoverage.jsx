@@ -3,6 +3,7 @@ import { createPolicy, getTotalPolicies } from "../lib/genlayerClient";
 import { trackPolicyId } from "../lib/localPolicies";
 import { useWallet } from "../context/WalletContext";
 import { useToast } from "../context/ToastContext";
+import RiskQuote from "../components/RiskQuote";
 
 const DEFAULTS = {
   airlineCode: "DL",
@@ -189,6 +190,13 @@ export default function BuyCoverage({ setView, openPolicy }) {
             <Field label="Premium" hint="Paid as the transaction value">
               <input className={inputClass} type="number" value={form.premiumWei} onChange={update("premiumWei")} />
             </Field>
+            <RiskQuote
+              airlineCode={form.airlineCode}
+              departureAirport={form.departureAirport}
+              thresholdMinutes={form.thresholdMinutes}
+              multiplierBps={form.payoutMultiplierBps}
+              premiumWei={form.premiumWei}
+            />
             <div className="border rule px-4 py-3 font-mono text-xs text-ivory-soft/50">
               Theoretical max payout at these terms:{" "}
               <span className={coverageTooHigh ? "text-amber" : "text-green"}>

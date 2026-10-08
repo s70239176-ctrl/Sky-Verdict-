@@ -295,6 +295,36 @@ export async function claimRefund(policyId) {
   });
 }
 
+// ---- v2 underwriting writes ----
+
+export async function depositLiquidity(amountWei) {
+  requireAddress();
+  return requireClient().writeContract({
+    address: CONTRACT_ADDRESS, functionName: "deposit_liquidity", args: [], value: amountWei,
+  });
+}
+
+export async function requestWithdrawal(shareAmount) {
+  requireAddress();
+  return requireClient().writeContract({
+    address: CONTRACT_ADDRESS, functionName: "request_withdrawal", args: [Number(shareAmount)],
+  });
+}
+
+export async function executeWithdrawal() {
+  requireAddress();
+  return requireClient().writeContract({
+    address: CONTRACT_ADDRESS, functionName: "execute_withdrawal", args: [],
+  });
+}
+
+export async function cancelWithdrawal() {
+  requireAddress();
+  return requireClient().writeContract({
+    address: CONTRACT_ADDRESS, functionName: "cancel_withdrawal", args: [],
+  });
+}
+
 // ---------------------------------------------------------------------
 // Reads — no wallet required
 // ---------------------------------------------------------------------
@@ -349,5 +379,30 @@ export async function getTotalPolicies() {
     address: CONTRACT_ADDRESS,
     functionName: "get_total_policies",
     args: [],
+  });
+}
+
+// ---- v2 reads (underwriting, on-chain pricing, keeper queue) ----
+
+export async function getUnderwriter(address) {
+  requireAddress();
+  return getReadClient().readContract({
+    address: CONTRACT_ADDRESS, functionName: "get_underwriter", args: [address],
+  });
+}
+
+export async function getQuote(airlineCode, departureAirport, thresholdMinutes, desiredCoverageWei) {
+  requireAddress();
+  return getReadClient().readContract({
+    address: CONTRACT_ADDRESS,
+    functionName: "get_quote",
+    args: [airlineCode, departureAirport, Number(thresholdMinutes), Number(desiredCoverageWei)],
+  });
+}
+
+export async function getKeeperQueue(limit = 20) {
+  requireAddress();
+  return getReadClient().readContract({
+    address: CONTRACT_ADDRESS, functionName: "get_keeper_queue", args: [Number(limit)],
   });
 }

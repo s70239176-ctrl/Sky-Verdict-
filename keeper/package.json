@@ -1,0 +1,14 @@
+{
+  "name": "skyverdict-keeper",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node keeper.js",
+    "dry-run": "node keeper.js --dry-run --once",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "genlayer-js": "1.1.8"
+  }
+}

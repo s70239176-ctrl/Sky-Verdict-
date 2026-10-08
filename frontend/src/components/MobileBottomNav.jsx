@@ -4,13 +4,14 @@ const LINKS = [
   { id: "home", label: "Home" },
   { id: "buy", label: "Protect" },
   { id: "policies", label: "Flights" },
+  { id: "underwrite", label: "Earn" },
   { id: "transparency", label: "History" },
 ];
 
 export default function MobileBottomNav({ view, setView }) {
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t rule bg-ink/95 backdrop-blur-md md:hidden"
+      className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t rule bg-ink/95 backdrop-blur-md md:hidden"
       aria-label="Primary"
     >
       {LINKS.map((l) => {
