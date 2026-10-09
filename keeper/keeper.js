@@ -43,6 +43,18 @@ const client = createClient({
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const handled = new Set(); // policy ids this process already attempted
+// Studio sometimes cancels a consensus tx (max_recovery_cycles_exceeded) leaving state untouched.
+// A cancelled/failed evaluation is retried on a later pass, at most MAX_ATTEMPTS times.
+const attempts = new Map();
+const MAX_ATTEMPTS = 3;
+function retryLater(id) {
+  const n = (attempts.get(id) || 0) + 1;
+  attempts.set(id, n);
+  if (n < MAX_ATTEMPTS) { handled.delete(Number(id)); handled.delete(String(id)); handled.delete("f" + id); }
+}
+function retryUnchanged(before, after, id) {
+  if (after.status === before.status) retryLater(id); // nothing happened on-chain
+}
 
 async function finalizePass() {
   let queue;
@@ -65,8 +77,10 @@ async function finalizePass() {
       const after = await client.readContract({ address: ADDRESS, functionName: "get_policy", args: [Number(id)] });
       log(`#${id} -> ${after.status} (payout ${after.payout_amount_wei}, bounty ${after.keeper_bounty_wei})`);
       sent++;
+      retryUnchanged(policy, after, id);
     } catch (e) {
       log(`#${id} finalize failed: ${e?.message || e}`);
+      retryLater(id);
     }
   }
 }
@@ -103,8 +117,10 @@ async function pass() {
       const after = await client.readContract({ address: ADDRESS, functionName: "get_policy", args: [Number(id)] });
       log(`#${id} -> ${after.status} (payout ${after.payout_amount_wei}, bounty ${after.keeper_bounty_wei})`);
       sent++;
+      retryUnchanged(policy, after, id);
     } catch (e) {
       log(`#${id} failed: ${e?.message || e}`);
+      retryLater(id);
     }
   }
 }
