@@ -53,8 +53,28 @@ Policy #1 bought through the live site (demo account) using a widget deep link w
   get_affiliate(0x0d20…23F0): balance 500, lifetime earned 500
   get_pool: creator fees 1,500 (2,000 minus the 500 affiliate cut), protocol fees 500, reserved 15,000
 
+5. Production — policy #1 settled (keeper bot, real consensus)
+--------------------------------------------------------------
+Policy #1 (AA100, bought 2026-10-08 via the referral deep link) was settled by keeper/keeper.js
+running unattended against the production address. Transaction hashes were not captured by the
+bot's log; the outcome is verified by on-chain reads of the production contract:
+  2026-10-11 00:10:48Z  evaluate_claim  -> real validator consensus on AA100: delay 4 min vs threshold 60,
+                        2/2 sources -> provisional NO_PAYOUT; deadline 1791763849 (24h window);
+                        reserve 15,000 held, no money moved.
+                        (The bot's receipt poll hit an RPC error and logged "failed", but the evaluation
+                        had landed on-chain; the bot correctly did not resend it.)
+  2026-10-12 00:11:25Z  finalize_claim  -> status EXPIRED_NO_PAYOUT, payout 0, reserve released,
+                        keeper bounty 225 wei, pool 507,500 unchanged (premium stays with underwriters).
+  Final reads: get_policy(1) EXPIRED_NO_PAYOUT / reserved 0 / bounty 225;
+               get_pool pool_balance 507,500, reserved_exposure 0, protocol_fees 275 (500 - 225 bounty);
+               get_loss_stats expected 3,450 vs realized 0;
+               get_calibration(AA): 1 observation, observed_base 0 bps (not yet adapting: needs 5).
+Note: the host computer slept between 2026-10-09 00:44Z and 2026-10-11 00:05Z, so the evaluation ran
+~2 days after the claim window opened (contract allows it any time within 14 days of arrival).
+
 Not yet verified live
 ---------------------
 - An OVERTURNED challenge (needs the real web to disagree with itself; covered by tests/direct/test_v3.py).
 - LP execute_withdrawal (24h cooldown).
-- A settlement on the production address (policy #1 becomes claimable 3h after its scheduled arrival, then a 24h challenge window).
+- A PAYOUT settlement on the production address (production's one settled policy was on time; the
+  payout path was verified on sandbox B).
