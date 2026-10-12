@@ -67,7 +67,7 @@ deployment has it off** and it cannot be changed after deploy.
 - **Payouts wait for the challenge window** (24h in production) — the price of a contestable verdict.
 - **Calibration is airline-level**; airport factors remain owner-tuned. Cancellation risk is a flat add-on.
 - **Share pricing includes premiums on open policies**, so a concentrated loss falls on whoever is in the pool at the time. That is the product, not a bug, but LPs should know.
-- **LP `execute_withdrawal`, an overturned challenge and a settlement on the production address** have not been exercised live yet (24h cooldown / needs a disagreeing web / first claim not yet due). See [`live-run-0.2.0.txt`](live-run-0.2.0.txt) for what has.
+- **LP `execute_withdrawal`, an overturned challenge and a PAYOUT on the production address** have not been exercised live yet (24h cooldown / needs a disagreeing web / production's only settled policy was on time). A production settlement (NO_PAYOUT) has been. See [`live-run-0.2.0.txt`](live-run-0.2.0.txt) for what has.
 
 ## Bugs found by live testing (fixed)
 

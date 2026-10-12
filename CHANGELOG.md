@@ -75,8 +75,12 @@ notes, tests and some doc headings call "v2" and "v3".
   provisional verdicts (PAYOUT and NO_PAYOUT), an inconclusive challenge with
   bond returned, finalize to PAID (15,000 wei) and to EXPIRED_NO_PAYOUT, reserve
   release, keeper bounty, loss stats and calibration updates.
+- Production policy #1 settled end to end by the keeper bot: evaluate (real
+  consensus, provisional NO_PAYOUT) then finalize after the 24h window
+  (`EXPIRED_NO_PAYOUT`, reserve released, bounty paid).
 - Not verified live: an overturned challenge (needs the real web to disagree
-  with itself; covered offline) and LP `execute_withdrawal` (24h cooldown).
+  with itself; covered offline), LP `execute_withdrawal` (24h cooldown), and a
+  PAYOUT settlement on production (payout verified on the sandbox).
 
 ## 0.1.0 — accepted MVP
 
